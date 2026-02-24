@@ -1,0 +1,34 @@
+# Python Caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+.cache/
+
+# Environment and Virtual Envs
+.env
+venv/
+env/
+ENV/
+
+# Database Files (Sensitive Data)
+data/*.db
+data/sector_graph.db
+*.sqlite
+
+# IDE Settings
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS related files
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Static build folders if any
+dist/
+build/
+node_modules/

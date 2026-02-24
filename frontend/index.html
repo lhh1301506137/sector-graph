@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>板块轮动预测系统</title>
+    <meta name="description" content="A股板块关系图谱与轮动预测系统">
+    <link rel="stylesheet" href="/static/style.css">
+    <!-- ECharts -->
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
+</head>
+
+<body>
+    <div class="app-wrapper">
+        <!-- 侧边导航栏 -->
+        <nav class="sidebar">
+            <div class="sidebar-header">
+                📊 板块轮动预测
+            </div>
+            <div class="sidebar-content">
+                <!-- 核心功能组 -->
+                <div class="sidebar-group">
+                    <div class="sidebar-label">核心看板</div>
+                    <div class="nav-item active" data-tab="ranking" onclick="App.switchPage('ranking')">
+                        <span class="icon">📈</span> 预测排行
+                    </div>
+                    <div class="nav-item" data-tab="graph" onclick="App.switchPage('graph')">
+                        <span class="icon">📊</span> 关系图谱
+                    </div>
+                    <div class="nav-item" data-tab="backtest" onclick="App.switchPage('backtest')">
+                        <span class="icon">📉</span> 回测复盘
+                    </div>
+                </div>
+
+                <!-- 数据管理组 -->
+                <div class="sidebar-group">
+                    <div class="sidebar-label">数据维护</div>
+                    <div class="nav-item" data-tab="manage-relations" onclick="App.switchPage('manage-relations')">
+                        <span class="icon">🔗</span> 关联管理
+                    </div>
+                    <div class="nav-item" data-tab="manage-sectors" onclick="App.switchPage('manage-sectors')">
+                        <span class="icon">📦</span> 板块管理
+                    </div>
+                    <div class="nav-item" data-tab="manage-logics" onclick="App.switchPage('manage-logics')">
+                        <span class="icon">📖</span> 逻辑词库
+                    </div>
+                </div>
+
+                <!-- 系统配置 -->
+                <div class="sidebar-group">
+                    <div class="sidebar-label">系统</div>
+                    <div class="nav-item" data-tab="settings" onclick="App.switchPage('settings')">
+                        <span class="icon">⚙️</span> 系统设置
+                    </div>
+                </div>
+            </div>
+            <div class="sidebar-footer">
+                <div class="toolbar-status" id="toolbar-status">| 系统就绪</div>
+            </div>
+        </nav>
+
+        <!-- 主展示视口 -->
+        <main class="main-viewport">
+            <!-- 工具栏 -->
+            <div class="toolbar">
+                <span id="sync-status-badge" class="tag score-tag"
+                    style="margin-right: auto; background: hsla(210, 50%, 20%, 0.5); border-color: hsla(210, 50%, 50%, 0.3);">📅
+                    数据同步于: [获取中...]</span>
+                <button class="toolbar-btn" id="btn-refresh" onclick="App.handleRefresh()">🔄 刷新数据</button>
+                <button class="toolbar-btn" id="btn-ai" onclick="App.handleAIAnalyze()">🤖 AI分析板块</button>
+                <button class="toolbar-btn primary" id="btn-calc" onclick="App.handleCalculate()">📊 执行计算评分</button>
+            </div>
+
+            <!-- 内容区 -->
+            <div class="content">
+                <!-- Tab1: 预测排行 -->
+                <div class="tab-panel active" id="panel-ranking">
+                    <!-- 摘要卡片 (Step 11) -->
+                    <div id="home-summary" class="summary-container">
+                        <div class="summary-card">
+                            <div class="card-icon">📅</div>
+                            <div class="card-info">
+                                <label>最近行情</label>
+                                <span id="sum-date">加载中...</span>
+                            </div>
+                        </div>
+                        <div class="summary-card">
+                            <div class="card-icon">🎯</div>
+                            <div class="card-info">
+                                <label>昨日验证</label>
+                                <span id="sum-hit">0%</span>
+                            </div>
+                        </div>
+                        <div class="summary-card alert">
+                            <div class="card-icon">🔥</div>
+                            <div class="card-info">
+                                <label>今日最强</label>
+                                <span id="sum-alert">待计算</span>
+                            </div>
+                        </div>
+                        <div class="summary-card">
+                            <div class="card-icon">📂</div>
+                            <div class="card-info">
+                                <label>板块总数</label>
+                                <span id="sum-total">0/0</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="manage-toolbar">
+                        <input type="text" class="search-input" id="ranking-search" placeholder="🔍 搜索板块..."
+                            oninput="App.filterRanking()">
+                        <select class="filter-select" id="ranking-type" onchange="App.filterRanking()">
+                            <option value="">全部类型</option>
+                            <option value="行业">行业</option>
+                            <option value="概念">概念</option>
+                        </select>
+                        <button class="toolbar-btn" id="ranking-fav-toggle" onclick="App.toggleFavFilter()">☆
+                            仅关注</button>
+                    </div>
+                    <div id="ranking-content">
+                        <div class="empty-state">
+                            <div class="icon">📊</div>
+                            <p>点击"刷新数据"获取板块数据<br>再点击"计算得分"生成排行</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tab2: 关系图谱 -->
+                <div class="tab-panel" id="panel-graph">
+                    <div id="graph-container"></div>
+                </div>
+
+                <!-- Tab: 板块管理 (原 Tab3-1) -->
+                <div class="tab-panel" id="panel-manage-sectors">
+                    <div class="manage-toolbar">
+                        <input type="text" class="search-input" id="sector-search" placeholder="🔍 搜索板块..."
+                            oninput="App.filterSectors()">
+                        <select class="filter-select" id="sector-type-filter" onchange="App.filterSectors()">
+                            <option value="">全部类型</option>
+                            <option value="行业">行业</option>
+                            <option value="概念">概念</option>
+                        </select>
+                    </div>
+                    <div id="sectors-table-wrap"></div>
+                </div>
+
+                <!-- Tab: 关联管理 (原 Tab3-2) -->
+                <div class="tab-panel" id="panel-manage-relations">
+                    <div class="manage-toolbar">
+                        <button class="toolbar-btn" onclick="App.showAddRelation()">➕ 添加关联</button>
+                        <button class="toolbar-btn alert" onclick="App.clearUnlockedRelations()">🧹 清理未锁定关联</button>
+                        <select class="filter-select" id="relation-source-filter" onchange="App.filterRelations()">
+                            <option value="">全部来源</option>
+                            <option value="manual">手动</option>
+                            <option value="ai">AI</option>
+                            <option value="system">系统</option>
+                        </select>
+                    </div>
+                    <div id="relations-table-wrap"></div>
+                </div>
+
+                <!-- Tab: 逻辑词库 (原 Tab3-3) -->
+                <div class="tab-panel" id="panel-manage-logics">
+                    <div class="manage-toolbar">
+                        <button class="toolbar-btn" onclick="App.showAddLogic()">➕ 添加逻辑模板</button>
+                        <p class="toolbar-hint">注：此处的逻辑将作为 AI 发现客观规律的参考模式</p>
+                    </div>
+                    <div id="logics-table-wrap"></div>
+                </div>
+
+                <!-- Tab4: 回测复盘 -->
+                <div class="tab-panel" id="panel-backtest">
+                    <!-- 回测摘要卡片 -->
+                    <div id="backtest-summary" class="summary-container">
+                        <div class="summary-card">
+                            <div class="card-icon">📅</div>
+                            <div class="card-info">
+                                <label>回测天数</label>
+                                <span id="bt-days">0</span>
+                            </div>
+                        </div>
+                        <div class="summary-card">
+                            <div class="card-icon">🚀</div>
+                            <div class="card-info">
+                                <label>平均 Alpha 超额</label>
+                                <span id="bt-alpha">0.00%</span>
+                            </div>
+                        </div>
+                        <div class="summary-card">
+                            <div class="card-icon">🎯</div>
+                            <div class="card-info">
+                                <label>Top10 平均命中率</label>
+                                <span id="bt-hit">0.00%</span>
+                            </div>
+                        </div>
+                        <div class="summary-card alert"
+                            style="background: hsla(270, 70%, 15%, 0.35); border-color: hsla(270, 70%, 50%, 0.25);">
+                            <div class="card-icon">🎲</div>
+                            <div class="card-info">
+                                <label>随机基准命中率</label>
+                                <span id="bt-baseline" style="color: #a78bfa;">0.00%</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="backtest-dashboard">
+                        <div class="chart-section panel-box">
+                            <h3 class="section-title">走势视图 (Alpha & 命中率)</h3>
+                            <div id="backtest-alpha-chart" style="width: 100%; height: 380px;"></div>
+                        </div>
+                        <div class="detail-section panel-box" style="display: flex; flex-direction: column;">
+                            <div
+                                style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                                <h3 class="section-title" id="bt-detail-title">Top 10 板块命中明细</h3>
+                                <span id="bt-detail-date" class="toolbar-hint">点击左侧图表节点查看特定日期明细</span>
+                            </div>
+                            <div id="bt-detail-container" style="flex: 1; overflow-y: auto;">
+                                <div class="empty-state">
+                                    <div class="icon">🔍</div>
+                                    <p>请在上方图表中点击一个日期节点</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab: 系统设置 (从弹窗改为独立页面) -->
+            <div class="tab-panel" id="panel-settings">
+                <div class="manage-toolbar">
+                    <h3 class="section-title">⚙️ 系统环境与核心配置</h3>
+                </div>
+                <div class="backtest-dashboard">
+                    <div class="panel-box">
+                        <h4>AI 模型与连接</h4>
+                        <div class="modal-field" style="margin-top:20px">
+                            <label>AI 提供商</label>
+                            <select id="cfg-ai-provider">
+                                <option value="deepseek">DeepSeek (推荐)</option>
+                                <option value="minimax">MiniMax</option>
+                                <option value="openai">OpenAI 兼容</option>
+                            </select>
+                        </div>
+                        <div class="modal-field">
+                            <label>API Key</label>
+                            <input type="password" id="cfg-ai-key" placeholder="在此输入您的 API Key">
+                        </div>
+                        <div class="modal-field">
+                            <label>Base URL</label>
+                            <input type="text" id="cfg-ai-url" placeholder="https://api.deepseek.com/v1">
+                        </div>
+                        <div class="modal-field">
+                            <label>模型名称</label>
+                            <input type="text" id="cfg-ai-model" value="deepseek-chat">
+                        </div>
+                    </div>
+                    <div class="panel-box">
+                        <h4>算法设置 & 后台任务</h4>
+                        <div class="modal-field" style="margin-top:20px">
+                            <label>偏差计算模式</label>
+                            <select id="cfg-algo-mode">
+                                <option value="positive_only">仅正偏差 (追涨/补涨)</option>
+                                <option value="all">双向偏差</option>
+                            </select>
+                        </div>
+                        <div class="modal-field">
+                            <label>时间衰减周期 (天)</label>
+                            <input type="number" id="cfg-algo-decay" value="30">
+                        </div>
+                        <hr style="margin:24px 0; border:0; border-top:1px solid var(--border-glass)">
+                        <h4>历史回测验证</h4>
+                        <div style="display: flex; gap: 10px; margin-top: 15px;">
+                            <input type="number" id="backtest-days" value="60" style="width: 80px;" placeholder="天数">
+                            <button class="toolbar-btn primary" onclick="App.handleRunBacktest()">🚀 启动双盲回测验证</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="manage-toolbar" style="margin-top:20px; justify-content: flex-end;">
+                    <button class="toolbar-btn primary" onclick="App.saveSettings()">💾 保存全局配置</button>
+                </div>
+            </div>
+
+    </div> <!-- .content 关闭 -->
+    </main> <!-- .main-viewport 关闭 -->
+    </div> <!-- .app-wrapper 关闭 -->
+
+    <!-- 只有涉及表单交互的弹窗保留 Modal 形式 -->
+    <!-- 添加关联弹窗 -->
+    <div class="modal-overlay" id="modal-add-relation">
+        <div class="modal">
+            <h3>➕ 添加关联</h3>
+            <div class="modal-field">
+                <label>源板块</label>
+                <select id="rel-source-id"></select>
+            </div>
+            <div class="modal-field">
+                <label>目标板块</label>
+                <select id="rel-target-id"></select>
+            </div>
+            <div class="modal-field">
+                <label>关系类型</label>
+                <select id="rel-type">
+                    <option>供应</option>
+                    <option>应用</option>
+                    <option>配套</option>
+                    <option>技术同源</option>
+                    <option>成本影响</option>
+                    <option>需求影响</option>
+                    <option>替代</option>
+                    <option>互补</option>
+                    <option>竞争</option>
+                    <option>政策联动</option>
+                </select>
+            </div>
+            <div class="modal-field">
+                <label>权重 (-10 ~ 10)</label>
+                <input type="number" id="rel-weight" value="5" min="-10" max="10" step="0.5">
+            </div>
+            <div class="modal-field">
+                <label>方向</label>
+                <select id="rel-direction">
+                    <option>A↔B</option>
+                    <option>A→B</option>
+                    <option>B→A</option>
+                </select>
+            </div>
+            <div class="modal-actions">
+                <button class="toolbar-btn" onclick="App.closeModal('modal-add-relation')">取消</button>
+                <button class="toolbar-btn primary" onclick="App.submitRelation()">确认添加</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 添加逻辑弹窗 -->
+    <div class="modal-overlay" id="modal-add-logic">
+        <div class="modal">
+            <h3>➕ 添加逻辑词条</h3>
+            <div class="modal-field">
+                <label>逻辑名称</label>
+                <input type="text" id="logic-name" placeholder="如：股权控制">
+            </div>
+            <div class="modal-field">
+                <label>关联大类</label>
+                <select id="logic-category">
+                    <option>供应</option>
+                    <option>应用</option>
+                    <option>配套</option>
+                    <option>技术同源</option>
+                    <option>成本影响</option>
+                    <option>需求影响</option>
+                    <option>替代</option>
+                    <option>互补</option>
+                    <option>竞争</option>
+                    <option>政策联动</option>
+                </select>
+            </div>
+            <div class="modal-field">
+                <label>权重参考 (1~10)</label>
+                <input type="number" id="logic-weight" value="5" min="1" max="10">
+            </div>
+            <div class="modal-field">
+                <label>逻辑说明</label>
+                <textarea id="logic-desc" placeholder="简述该逻辑下板块如何联动..."></textarea>
+            </div>
+            <div class="modal-field">
+                <label>AI Prompt 片段</label>
+                <textarea id="logic-prompt" placeholder="引导AI判断的关键词或描述..."></textarea>
+            </div>
+            <div class="modal-actions">
+                <button class="toolbar-btn" onclick="App.closeModal('modal-add-logic')">取消</button>
+                <button class="toolbar-btn primary" onclick="App.submitLogic()">确认添加</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- AI 分析结果预览弹窗 -->
+    <div class="modal-overlay" id="modal-ai-pending">
+        <div class="modal modal-large">
+            <h3>🤖 AI 分析建议 (待确认)</h3>
+            <p class="toolbar-hint">AI 根据词库逻辑识别出的关联，确认后将正式入库。</p>
+            <div id="ai-pending-list" class="ai-list-wrap">
+                <!-- AI 建议项内容 -->
+            </div>
+            <div class="modal-actions">
+                <button class="toolbar-btn" onclick="App.closeModal('modal-ai-pending')">取消</button>
+                <button class="toolbar-btn danger" onclick="App.clearAIPending()">全部清理</button>
+                <button class="toolbar-btn primary" onclick="App.confirmAIResults()">确认并导入</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 板块详情侧边栏 -->
+    <div id="side-detail-panel" class="side-panel">
+        <div class="panel-header">
+            <h3>📊 板块详情</h3>
+            <button class="close-btn" onclick="App.closeSidePanel()">&times;</button>
+        </div>
+        <div id="sector-detail-content" class="panel-content">
+            <div class="detail-header flex-between-center">
+                <h2 id="detail-name">板块名称</h2>
+                <div class="flex-gap-8">
+                    <button id="btn-ai-explain" class="btn-ai-gradient">✨ AI 深度解盘</button>
+                    <button class="icon-btn" onclick="App.toggleDetailFav()" id="detail-fav-btn" title="关注">☆</button>
+                </div>
+            </div>
+            <div class="tag-row" style="margin-bottom: 16px;">
+                <span id="detail-sector-type" class="tag">行业</span>
+                <span id="detail-sector-score" class="tag score-tag">得分: 0.0</span>
+            </div>
+            <div class="detail-section">
+                <h4>📈 得分趋势 (最近7天轨迹)</h4>
+                <div id="detail-trend-chart" style="height: 220px; width: 100%;"></div>
+            </div>
+            <div class="detail-section">
+                <h4>🔗 关键关联节点</h4>
+                <div id="detail-relation-summary" class="relation-summary-list"></div>
+            </div>
+            <div class="detail-section">
+                <h4>📅 历史异动记录</h4>
+                <div id="detail-history-list" class="history-mini-list"></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="toast-container"></div>
+    <script src="/static/api.js"></script>
+    <script src="/static/app.js"></script>
+</body>
+
+</html>

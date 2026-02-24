@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>板块关系图谱 - V0.1</title>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🔗 板块关系图谱</h1>
+            <p class="subtitle">A股板块轮动分析系统 - V0.1 原型</p>
+        </header>
+        
+        <main>
+            <div id="graph-container"></div>
+            
+            <aside class="info-panel">
+                <h2>📊 板块信息</h2>
+                <div id="sector-info">
+                    <p class="placeholder">点击节点查看详情</p>
+                </div>
+                
+                <h2>📈 今日涨跌</h2>
+                <div id="sector-list"></div>
+            </aside>
+        </main>
+        
+        <footer>
+            <p>数据为测试数据 | V0.1 最小原型</p>
+        </footer>
+    </div>
+    
+    <script src="app.js"></script>
+</body>
+</html>

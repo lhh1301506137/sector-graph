@@ -1,0 +1,117 @@
+{
+  "sectors": [
+    {
+      "id": "xinnengyuanqiche",
+      "name": "新能源汽车",
+      "level": 1,
+      "volume": 100,
+      "dailyChange": 3.0,
+      "weekChange": 5.2,
+      "monthChange": 8.5,
+      "timeWeightMultiplier": 1.0
+    },
+    {
+      "id": "donglidianchi",
+      "name": "动力电池",
+      "level": 2,
+      "volume": 80,
+      "dailyChange": 2.5,
+      "weekChange": 4.0,
+      "monthChange": 6.0,
+      "timeWeightMultiplier": 1.0
+    },
+    {
+      "id": "gutaidianchi",
+      "name": "固态电池",
+      "level": 3,
+      "volume": 40,
+      "dailyChange": 1.8,
+      "weekChange": 3.5,
+      "monthChange": 10.2,
+      "timeWeightMultiplier": 1.0
+    },
+    {
+      "id": "likuang",
+      "name": "锂矿",
+      "level": 2,
+      "volume": 60,
+      "dailyChange": -1.2,
+      "weekChange": -2.0,
+      "monthChange": -5.0,
+      "timeWeightMultiplier": 1.0
+    },
+    {
+      "id": "chongdianzhuang",
+      "name": "充电桩",
+      "level": 2,
+      "volume": 50,
+      "dailyChange": 2.0,
+      "weekChange": 3.0,
+      "monthChange": 4.5,
+      "timeWeightMultiplier": 1.0
+    }
+  ],
+  "relations": [
+    {
+      "source": "xinnengyuanqiche",
+      "target": "donglidianchi",
+      "type": "应用",
+      "weight": 9,
+      "direction": "bidirectional",
+      "levelCoefficient": 0.8
+    },
+    {
+      "source": "xinnengyuanqiche",
+      "target": "chongdianzhuang",
+      "type": "配套",
+      "weight": 7,
+      "direction": "bidirectional",
+      "levelCoefficient": 0.8
+    },
+    {
+      "source": "donglidianchi",
+      "target": "gutaidianchi",
+      "type": "技术同源",
+      "weight": 8,
+      "direction": "bidirectional",
+      "levelCoefficient": 0.8
+    },
+    {
+      "source": "donglidianchi",
+      "target": "likuang",
+      "type": "供应",
+      "weight": 8,
+      "direction": "forward",
+      "levelCoefficient": 1.0
+    },
+    {
+      "source": "likuang",
+      "target": "gutaidianchi",
+      "type": "成本影响",
+      "weight": 6,
+      "direction": "forward",
+      "levelCoefficient": 0.8
+    },
+    {
+      "source": "xinnengyuanqiche",
+      "target": "gutaidianchi",
+      "type": "需求影响",
+      "weight": 5,
+      "direction": "forward",
+      "levelCoefficient": 0.5
+    }
+  ],
+  "config": {
+    "timeWeights": {
+      "daily": 1.0,
+      "week": 0.7,
+      "month": 0.3
+    },
+    "levelCoefficients": {
+      "same": 1.0,
+      "adjacent": 0.8,
+      "twoLevels": 0.5,
+      "contain": 0.3
+    }
+  }
+}
