@@ -11,11 +11,12 @@ __pycache__/
 venv/
 env/
 ENV/
+.venv-win/
 
-# Database Files (Sensitive Data)
-data/*.db
-data/sector_graph.db
-*.sqlite
+# Database Files (Temporarily included for handoff)
+# data/*.db
+# data/sector_graph.db
+# *.sqlite
 
 # IDE Settings
 .vscode/
@@ -32,3 +33,11 @@ Desktop.ini
 dist/
 build/
 node_modules/
+
+# Local runtime artifacts
+tmp_*
+*.pid
+reports/
+frontend/*.before-encoding-fix
+frontend/*.before-heuristic-fix
+frontend/*.bak-*

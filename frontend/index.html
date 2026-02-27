@@ -6,6 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>板块轮动预测系统</title>
     <meta name="description" content="A股板块关系图谱与轮动预测系统">
+    <link rel="icon" href="data:,">
     <link rel="stylesheet" href="/static/style.css">
     <!-- ECharts -->
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
@@ -81,7 +82,7 @@
                         <div class="summary-card">
                             <div class="card-icon">📅</div>
                             <div class="card-info">
-                                <label>最近行情</label>
+                                <label>最新日期</label>
                                 <span id="sum-date">加载中...</span>
                             </div>
                         </div>
@@ -106,17 +107,116 @@
                                 <span id="sum-total">0/0</span>
                             </div>
                         </div>
+                        <div class="summary-card compare">
+                            <div class="card-icon">🧪</div>
+                            <div class="card-info">
+                                <label>双源比对</label>
+                                <span id="sum-compare-main" class="mini">disabled</span>
+                                <span id="sum-compare-sub" class="mini">匹配0 / 警告0</span>
+                            </div>
+                        </div>
+                        <div class="summary-card ingest">
+                            <div class="card-icon">📥</div>
+                            <div class="card-info">
+                                <label>本次入库</label>
+                                <span id="sum-ingest-main" class="mini">--</span>
+                                <span id="sum-ingest-sub" class="mini">新增0 / 更新0 / 失败0</span>
+                            </div>
+                        </div>
                     </div>
-                    <div class="manage-toolbar">
+                    <div id="pipeline-stage-panel" class="pipeline-stage-panel">
+                        <div class="pipeline-stage-header">
+                            <span class="pipeline-stage-title">链路进度（阶段锁）</span>
+                            <span id="pipeline-stage-lock" class="pipeline-stage-lock">阶段锁：加载中...</span>
+                        </div>
+                        <div id="pipeline-stage-legend" class="pipeline-stage-legend"></div>
+                        <div id="pipeline-stage-steps" class="pipeline-stage-steps"></div>
+                        <div id="pipeline-stage-tip" class="pipeline-stage-tip">正在读取当前链路状态...</div>
+                    </div>
+                    <div id="ops-monitor-panel" class="ops-monitor-panel">
+                        <div class="ops-monitor-header">
+                            <span class="ops-monitor-title">系统监控与验收可见性</span>
+                            <span id="ops-monitor-summary" class="ops-monitor-summary">监控信号加载中...</span>
+                        </div>
+                        <div id="ops-monitor-items" class="ops-monitor-items"></div>
+                        <div id="ops-monitor-detail" class="ops-monitor-detail"></div>
+                    </div>
+                    <div id="release-check-panel" class="release-check-panel">
+                        <div class="release-check-header">
+                            <span class="release-check-title">发布准备检查</span>
+                            <span id="release-check-summary" class="release-check-summary">校验中...</span>
+                        </div>
+                        <div id="release-check-items" class="release-check-items"></div>
+                    </div>
+                    <div id="release-runbook-panel" class="release-runbook-panel">
+                        <div class="release-runbook-header">
+                            <span class="release-runbook-title">发布运行手册与回滚口径</span>
+                            <span id="release-runbook-summary" class="release-runbook-summary">加载中...</span>
+                        </div>
+                        <div id="release-runbook-steps" class="release-runbook-steps"></div>
+                        <div id="release-runbook-rollback" class="release-runbook-rollback"></div>
+                    </div>
+                    <div id="post-release-observe-panel" class="post-release-observe-panel">
+                        <div class="post-release-observe-header">
+                            <span class="post-release-observe-title">发布后运行观察与收官验收</span>
+                            <span id="post-release-observe-summary" class="post-release-observe-summary">加载中...</span>
+                        </div>
+                        <div id="post-release-observe-items" class="post-release-observe-items"></div>
+                        <div id="post-release-observe-actions" class="post-release-observe-actions"></div>
+                        <div id="post-release-observe-archive" class="post-release-observe-archive"></div>
+                    </div>
+                    <div id="closure-archive-panel" class="closure-archive-panel">
+                        <div class="closure-archive-header">
+                            <span class="closure-archive-title">收官归档与维护交接</span>
+                            <span id="closure-archive-summary" class="closure-archive-summary">加载中...</span>
+                        </div>
+                        <div id="closure-archive-items" class="closure-archive-items"></div>
+                        <div id="closure-archive-actions" class="closure-archive-actions"></div>
+                    </div>
+                    <div id="maintenance-mode-panel" class="maintenance-mode-panel">
+                        <div class="maintenance-mode-header">
+                            <span class="maintenance-mode-title">维护模式（回归巡检）</span>
+                            <span id="maintenance-mode-summary" class="maintenance-mode-summary">加载中...</span>
+                        </div>
+                        <div id="maintenance-mode-items" class="maintenance-mode-items"></div>
+                        <div id="maintenance-mode-actions" class="maintenance-mode-actions"></div>
+                    </div>
+                    <div id="quality-gate-panel" class="quality-gate-panel">
+                        <div class="quality-gate-header">
+                            <span id="quality-gate-main" class="quality-gate-main">质量门控：待检测</span>
+                            <span id="quality-gate-sub" class="quality-gate-sub">请先刷新数据并执行质量检查</span>
+                        </div>
+                        <div id="quality-gate-reasons" class="quality-gate-reasons"></div>
+                        <div id="quality-gate-reason-compare" class="quality-gate-reason-compare"></div>
+                        <div id="quality-gate-source" class="quality-gate-source"></div>
+                        <div id="quality-gate-trend" class="quality-gate-trend"></div>
+                        <div id="quality-gate-date-toolbar" class="quality-gate-date-toolbar"></div>
+                        <div id="quality-gate-sample-filters" class="quality-gate-sample-filters"></div>
+                        <div id="quality-gate-samples" class="quality-gate-samples"></div>
+                    </div>
+                    <div class="manage-toolbar ranking-toolbar">
                         <input type="text" class="search-input" id="ranking-search" placeholder="🔍 搜索板块..."
                             oninput="App.filterRanking()">
                         <select class="filter-select" id="ranking-type" onchange="App.filterRanking()">
                             <option value="">全部类型</option>
-                            <option value="行业">行业</option>
-                            <option value="概念">概念</option>
+                            <option value="industry">行业</option>
+                            <option value="concept">概念</option>
                         </select>
-                        <button class="toolbar-btn" id="ranking-fav-toggle" onclick="App.toggleFavFilter()">☆
-                            仅关注</button>
+                        <select class="filter-select" id="ranking-score-band" onchange="App.filterRanking()">
+                            <option value="">全部得分区间</option>
+                            <option value="strong">强势（score &gt;= 8）</option>
+                            <option value="watch">观察（5 &lt;= score &lt; 8）</option>
+                            <option value="weak">弱势（score &lt; 5）</option>
+                        </select>
+                        <select class="filter-select" id="ranking-sort" onchange="App.filterRanking()">
+                            <option value="rank_asc">默认排序（Rank）</option>
+                            <option value="score_desc">按得分（高 -&gt; 低）</option>
+                            <option value="daily_change_desc">按日涨幅（高 -&gt; 低）</option>
+                            <option value="deviation_desc">按偏差（高 -&gt; 低）</option>
+                        </select>
+                        <button class="toolbar-btn" id="ranking-fav-toggle" onclick="App.toggleFavFilter()">☆ 仅关注</button>
+                        <button class="toolbar-btn" id="ranking-reset-btn" onclick="App.resetRankingFilters()">重置筛选</button>
+                        <span id="ranking-filter-summary" class="toolbar-hint ranking-filter-summary">当前结果 0 条</span>
                     </div>
                     <div id="ranking-content">
                         <div class="empty-state">
@@ -138,8 +238,8 @@
                             oninput="App.filterSectors()">
                         <select class="filter-select" id="sector-type-filter" onchange="App.filterSectors()">
                             <option value="">全部类型</option>
-                            <option value="行业">行业</option>
-                            <option value="概念">概念</option>
+                            <option value="industry">行业</option>
+                            <option value="concept">概念</option>
                         </select>
                     </div>
                     <div id="sectors-table-wrap"></div>
@@ -204,6 +304,34 @@
                         </div>
                     </div>
 
+                    <div id="backtest-job-panel" class="backtest-job-panel panel-box">
+                        <div class="backtest-job-header">
+                            <h3 class="section-title">回测任务状态</h3>
+                            <div class="backtest-job-actions">
+                                <input type="number" id="backtest-days-inline" value="60" min="5" max="240"
+                                    placeholder="天数">
+                                <button class="toolbar-btn primary" id="btn-backtest-run-inline"
+                                    onclick="App.handleRunBacktest()">🚀 启动回测任务</button>
+                                <button class="toolbar-btn" id="btn-backtest-jobs-refresh"
+                                    onclick="App.loadBacktestJobs(true)">🔄 刷新状态</button>
+                                <button class="toolbar-btn" id="btn-backtest-consistency-check"
+                                    onclick="App.handleCheckBacktestConsistency()">🧪 校验口径</button>
+                            </div>
+                        </div>
+                        <div class="backtest-job-meta">
+                            <span id="backtest-job-current">当前任务：未选择</span>
+                            <span id="backtest-job-result-run">结果视角：最新任务</span>
+                            <span id="backtest-job-polling">自动轮询：开启（3s）</span>
+                            <span id="backtest-consistency-status" class="backtest-consistency-status idle">口径校验：未执行</span>
+                        </div>
+                        <div id="backtest-job-list" class="backtest-job-list">
+                            <div class="empty-state">
+                                <div class="icon">🧩</div>
+                                <p>暂无回测任务，点击启动回测任务开始</p>
+                            </div>
+                        </div>
+                    </div>
+
                     <div class="backtest-dashboard">
                         <div class="chart-section panel-box">
                             <h3 class="section-title">走势视图 (Alpha & 命中率)</h3>
@@ -226,7 +354,7 @@
                 </div>
             </div>
 
-            <!-- Tab: 系统设置 (从弹窗改为独立页面) -->
+            <!-- Tab: 系统设置 (从弹窗改为独立页) -->
             <div class="tab-panel" id="panel-settings">
                 <div class="manage-toolbar">
                     <h3 class="section-title">⚙️ 系统环境与核心配置</h3>
@@ -268,12 +396,142 @@
                             <label>时间衰减周期 (天)</label>
                             <input type="number" id="cfg-algo-decay" value="30">
                         </div>
+                        <hr style="margin:20px 0; border:0; border-top:1px solid var(--border-glass)">
+                        <h4>数据质量门控</h4>
+                        <div class="modal-field" style="margin-top:10px;">
+                            <label>系统值推荐（一键切换并保存）</label>
+                            <div class="quality-preset-actions">
+                                <button class="toolbar-btn" id="btn-quality-preset-low" onclick="App.handleApplyQualityPreset('low')">低（宽松）</button>
+                                <button class="toolbar-btn" id="btn-quality-preset-medium" onclick="App.handleApplyQualityPreset('medium')">中（推荐）</button>
+                                <button class="toolbar-btn" id="btn-quality-preset-high" onclick="App.handleApplyQualityPreset('high')">高（严格）</button>
+                            </div>
+                            <span id="quality-preset-hint" class="toolbar-hint">当前档位：自定义</span>
+                        </div>
+                        <div class="modal-field" style="margin-top:15px">
+                            <label>允许失败行数 (quality_max_failed_rows)</label>
+                            <input type="number" id="cfg-quality-max-failed-rows" value="25" min="0">
+                        </div>
+                        <div class="modal-field">
+                            <label>最小总行数 (quality_min_total_rows)</label>
+                            <input type="number" id="cfg-quality-min-total-rows" value="180" min="0">
+                        </div>
+                        <div class="modal-field">
+                            <label>新鲜度阈值分钟 (quality_stale_minutes)</label>
+                            <input type="number" id="cfg-quality-stale-minutes" value="240" min="1">
+                        </div>
+                        <div class="modal-field">
+                            <label style="display:flex;align-items:center;gap:8px;">
+                                <input type="checkbox" id="cfg-quality-require-freshness" checked>
+                                发布前强制新鲜度通过 (quality_require_freshness_for_publish)
+                            </label>
+                        </div>
+                        <div class="modal-field">
+                            <label>必填字段 (quality_required_fields, 逗号分隔)</label>
+                            <input type="text" id="cfg-quality-required-fields"
+                                value="name,category_type,daily_change,net_amount,turnover,lead_stock_change">
+                        </div>
+                        <div class="modal-field">
+                            <label>异常阈值: daily_change 绝对值上限</label>
+                            <input type="number" id="cfg-quality-daily-change-max" value="20" min="1" step="0.1">
+                        </div>
+                        <div class="modal-field">
+                            <label>异常阈值: lead_stock_change 绝对值上限</label>
+                            <input type="number" id="cfg-quality-lead-stock-change-max" value="25" min="1" step="0.1">
+                        </div>
+                        <div class="modal-field">
+                            <label>异常阈值: turnover 绝对值上限</label>
+                            <input type="number" id="cfg-quality-turnover-max" value="30" min="1" step="0.1">
+                        </div>
+                        <div class="modal-field">
+                            <label>异常阈值: net_amount 绝对值上限</label>
+                            <input type="number" id="cfg-quality-net-amount-max" value="500" min="1" step="0.1">
+                        </div>
+                        <hr style="margin:24px 0; border:0; border-top:1px solid var(--border-glass)">
+                        <h4>数据源策略</h4>
+                        <div class="modal-field" style="margin-top:15px">
+                            <label>主数据源</label>
+                            <select id="cfg-data-primary">
+                                <option value="sina">新浪财经</option>
+                                <option value="akshare">AKShare</option>
+                                <option value="eastmoney">东方财富</option>
+                                <option value="tushare">TuShare</option>
+                            </select>
+                        </div>
+                        <div class="modal-field">
+                            <label>校验数据源</label>
+                            <select id="cfg-data-verify">
+                                <option value="">不启用</option>
+                                <option value="akshare">AKShare</option>
+                                <option value="eastmoney">东方财富</option>
+                                <option value="sina">新浪财经</option>
+                                <option value="tushare">TuShare</option>
+                            </select>
+                        </div>
+                        <div class="modal-field">
+                            <label>TuShare Token</label>
+                            <input type="password" id="cfg-data-tushare-token" placeholder="留空则不修改">
+                        </div>
+                        <div class="modal-field">
+                            <label style="display:flex;align-items:center;gap:8px;">
+                                <input type="checkbox" id="cfg-data-dual">
+                                启用双源比对（主源 + 校验源）
+                            </label>
+                        </div>
+                        <div class="modal-field">
+                            <label>比对告警阈值（涨跌幅差，%）</label>
+                            <input type="number" id="cfg-data-threshold" value="0.8" step="0.1" min="0">
+                        </div>
+                        <div class="modal-field">
+                            <label style="display:flex;align-items:center;gap:8px;">
+                                <input type="checkbox" id="cfg-data-proxy-enabled" onchange="App.handleProxyConfigToggle()">
+                                启用 HTTP 代理
+                            </label>
+                        </div>
+                        <div class="modal-field">
+                            <label>代理地址</label>
+                            <input type="text" id="cfg-data-proxy" placeholder="http://127.0.0.1:7890">
+                        </div>
+                        <div class="modal-field">
+                            <label>代理策略</label>
+                            <select id="cfg-data-proxy-strategy">
+                                <option value="auto">auto（直连优先，代理兜底）</option>
+                                <option value="force_direct">force_direct（仅直连）</option>
+                                <option value="force_proxy">force_proxy（仅代理）</option>
+                            </select>
+                        </div>
+                        <div class="modal-field" style="margin-top:10px; display:flex; gap:10px; align-items:center;">
+                            <button class="toolbar-btn" id="btn-data-health" onclick="App.handleCheckDataSources()">🩺 检查数据源连通性</button>
+                            <button class="toolbar-btn" id="btn-data-apply" onclick="App.handleApplyRecommendedSource()">✅ 应用推荐主源</button>
+                            <span id="data-health-summary" class="toolbar-hint"></span>
+                        </div>
+                        <div id="data-health-result" class="config-health-result"></div>
                         <hr style="margin:24px 0; border:0; border-top:1px solid var(--border-glass)">
                         <h4>历史回测验证</h4>
                         <div style="display: flex; gap: 10px; margin-top: 15px;">
                             <input type="number" id="backtest-days" value="60" style="width: 80px;" placeholder="天数">
                             <button class="toolbar-btn primary" onclick="App.handleRunBacktest()">🚀 启动双盲回测验证</button>
                         </div>
+                        <hr style="margin:24px 0; border:0; border-top:1px solid var(--border-glass)">
+                        <h4>AI参数优化建议（绑定 run_id）</h4>
+                        <div class="modal-field" style="margin-top: 12px;">
+                            <label>回测任务 run_id（留空则自动选最近已完成任务）</label>
+                            <input type="text" id="cfg-opt-run-id" placeholder="例如: bt_20260226_214557_095">
+                        </div>
+                        <div class="modal-field" style="display:flex; gap:10px; align-items:center;">
+                            <button class="toolbar-btn" id="btn-opt-generate" onclick="App.handleGenerateOptimizationSuggestion()">🤖 生成参数建议</button>
+                            <button class="toolbar-btn" id="btn-opt-refresh" onclick="App.loadOptimizationSuggestions()">🔄 刷新建议</button>
+                            <span id="opt-suggestion-summary" class="toolbar-hint"></span>
+                        </div>
+                        <div id="opt-suggestion-result" class="config-health-result"></div>
+                        <hr style="margin:24px 0; border:0; border-top:1px solid var(--border-glass)">
+                        <h4>算法配置版本化（保存 / 查询 / 应用）</h4>
+                        <div class="modal-field" style="margin-top:10px; display:flex; gap:10px; align-items:center;">
+                            <button class="toolbar-btn" id="btn-version-save-current" onclick="App.handleSaveCurrentAlgoVersion()">💾 保存当前参数版本</button>
+                            <button class="toolbar-btn" id="btn-version-apply-suggestion" onclick="App.handleSaveAndApplyLatestSuggestion()">🧩 按最新建议保存并应用</button>
+                            <button class="toolbar-btn" id="btn-version-refresh" onclick="App.loadConfigVersions()">🔄 刷新版本</button>
+                            <span id="cfg-version-summary" class="toolbar-hint"></span>
+                        </div>
+                        <div id="cfg-version-result" class="config-health-result"></div>
                     </div>
                 </div>
                 <div class="manage-toolbar" style="margin-top:20px; justify-content: flex-end;">
@@ -304,7 +562,7 @@
                     <option>供应</option>
                     <option>应用</option>
                     <option>配套</option>
-                    <option>技术同源</option>
+                    <option>技术协同</option>
                     <option>成本影响</option>
                     <option>需求影响</option>
                     <option>替代</option>
@@ -346,7 +604,7 @@
                     <option>供应</option>
                     <option>应用</option>
                     <option>配套</option>
-                    <option>技术同源</option>
+                    <option>技术协同</option>
                     <option>成本影响</option>
                     <option>需求影响</option>
                     <option>替代</option>
@@ -356,7 +614,7 @@
                 </select>
             </div>
             <div class="modal-field">
-                <label>权重参考 (1~10)</label>
+                <label>权重参数 (1~10)</label>
                 <input type="number" id="logic-weight" value="5" min="1" max="10">
             </div>
             <div class="modal-field">
@@ -378,7 +636,7 @@
     <div class="modal-overlay" id="modal-ai-pending">
         <div class="modal modal-large">
             <h3>🤖 AI 分析建议 (待确认)</h3>
-            <p class="toolbar-hint">AI 根据词库逻辑识别出的关联，确认后将正式入库。</p>
+            <p class="toolbar-hint">AI 根据词库逻辑识别出的关联，确认后将正式入库</p>
             <div id="ai-pending-list" class="ai-list-wrap">
                 <!-- AI 建议项内容 -->
             </div>
@@ -424,8 +682,9 @@
     </div>
 
     <div id="toast-container"></div>
-    <script src="/static/api.js"></script>
-    <script src="/static/app.js"></script>
+    <script src="/static/api.js?v=20260227-maintenance2"></script>
+    <script src="/static/app.js?v=20260227-maintenance2"></script>
 </body>
 
 </html>
+

@@ -3,18 +3,78 @@
 
 import json
 from datetime import date, timedelta
-from typing import List, Dict
+from typing import List, Dict, Optional, Callable
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import text
 
-from server.models import Sector, DailyData, Prediction, BacktestResult
+from server.models import Sector, DailyData, BacktestResult, BacktestJob
 from server.core.scoring import run_scoring
 
 class BacktestEngine:
     def __init__(self, db: Session):
         self.db = db
+        self._legacy_date_unique_schema = self._detect_legacy_date_unique_schema()
 
-    async def run_period_backtest(self, days: int = 60) -> Dict:
+    def _detect_legacy_date_unique_schema(self) -> bool:
+        """判断 backtest_results 是否仍为 date 唯一的旧结构。"""
+        try:
+            rows = self.db.execute(text("PRAGMA index_list(backtest_results)")).fetchall()
+            for row in rows:
+                idx_name = row[1]
+                is_unique = int(row[2]) == 1
+                if not is_unique:
+                    continue
+                cols = self.db.execute(
+                    text(f"PRAGMA index_info({idx_name})")
+                ).fetchall()
+                col_names = [c[2] for c in cols]
+                if col_names == ["date"]:
+                    return True
+        except Exception:
+            return False
+        return False
+
+    def _resolve_effective_run_id(self, preferred_run_id: str = "") -> str:
+        candidate = str(preferred_run_id or "").strip()
+        if candidate:
+            return candidate
+        recent_jobs = self.db.query(BacktestJob.run_id).filter(
+            BacktestJob.status.in_(["completed", "cancelled", "failed"])
+        ).order_by(BacktestJob.id.desc()).limit(40).all()
+        for row in recent_jobs:
+            rid = str(row[0] or "").strip()
+            if not rid:
+                continue
+            exists = self.db.query(BacktestResult.id).filter(
+                BacktestResult.run_id == rid
+            ).first()
+            if exists:
+                return rid
+        latest = self.db.query(BacktestResult.run_id).filter(
+            BacktestResult.run_id != ""
+        ).order_by(BacktestResult.id.desc()).first()
+        if latest and latest[0]:
+            return str(latest[0]).strip()
+        return ""
+
+    def _lookup_params_snapshot(self, run_id: str) -> str:
+        rid = str(run_id or "").strip()
+        if not rid:
+            return "{}"
+        row = self.db.query(BacktestJob.params_snapshot).filter(
+            BacktestJob.run_id == rid
+        ).first()
+        if not row or row[0] is None:
+            return "{}"
+        text = str(row[0]).strip()
+        return text if text else "{}"
+
+    async def run_period_backtest(
+        self,
+        days: int = 60,
+        run_id: str = "",
+        should_cancel: Optional[Callable[[], bool]] = None,
+    ) -> Dict:
         """
         [Upgrade] 内存优化版回测引擎
         """
@@ -48,15 +108,31 @@ class BacktestEngine:
         valid_days = 0
 
         for current_date in test_dates:
+            if should_cancel and should_cancel():
+                self.db.commit()
+                return {
+                    "run_id": run_id or "",
+                    "total_days": valid_days,
+                    "avg_hit_rate": (total_hits / (valid_days * 10)) * 100 if valid_days else 0,
+                    "avg_alpha": (total_alpha / valid_days) if valid_days else 0,
+                    "baseline_hit_rate": (total_random_hits / (valid_days * 10)) * 100 if valid_days else 0,
+                    "cancelled": True,
+                }
+
             # 2. 模拟当天视角进行评分 (传入全局 data_index)
-            scoring_res = run_scoring(self.db, current_date, data_cache=data_index)
+            scoring_res = run_scoring(
+                self.db,
+                current_date,
+                data_cache=data_index,
+                persist_prediction=False,
+                run_type="backtest",
+                run_id=run_id or "",
+            )
             if scoring_res["calculated"] == 0:
                 continue
 
             # 3. 统计当日 Top 10
-            top_10 = self.db.query(Prediction).filter(
-                Prediction.date == current_date
-            ).order_by(Prediction.rank).limit(10).all()
+            top_10 = scoring_res.get("scores", [])[:10]
             
             if not top_10: continue
 
@@ -87,16 +163,18 @@ class BacktestEngine:
             details = []
             
             for p in top_10:
-                is_hit = (p.sector_id in top_20_ids)
+                sector_id = p["sector_id"]
+                score = p["score"]
+                is_hit = (sector_id in top_20_ids)
                 if is_hit: hit_count += 1
                 
                 # 获取 T+1 涨幅
-                change = market_daily.get(p.sector_id).daily_change if p.sector_id in market_daily else 0
+                change = market_daily.get(sector_id).daily_change if sector_id in market_daily else 0
                 top_10_changes.append(change)
                 
                 details.append({
-                    "name": sector_map.get(p.sector_id),
-                    "score": p.score,
+                    "name": sector_map.get(sector_id),
+                    "score": score,
                     "change_t1": change,
                     "is_hit": is_hit
                 })
@@ -108,10 +186,24 @@ class BacktestEngine:
             random_hits_expected = (20.0 / len(market_daily)) * 10
             
             # 6. 持久化
-            backtest_rec = self.db.query(BacktestResult).filter(BacktestResult.date == current_date).first()
+            effective_run_id = str(run_id or "").strip()
+            backtest_rec = self.db.query(BacktestResult).filter(
+                BacktestResult.date == current_date,
+                BacktestResult.run_id == effective_run_id,
+            ).first()
+            # 仅兼容旧库（date 唯一）时，回退到按 date 覆盖
+            if (not backtest_rec) and self._legacy_date_unique_schema:
+                backtest_rec = self.db.query(BacktestResult).filter(
+                    BacktestResult.date == current_date
+                ).first()
             if not backtest_rec:
-                backtest_rec = BacktestResult(date=current_date)
+                backtest_rec = BacktestResult(
+                    run_id=effective_run_id,
+                    date=current_date,
+                )
                 self.db.add(backtest_rec)
+            else:
+                backtest_rec.run_id = effective_run_id
             
             backtest_rec.top_10_hits = hit_count
             backtest_rec.average_alpha = round(daily_alpha, 4)
@@ -126,18 +218,29 @@ class BacktestEngine:
         self.db.commit()
         
         return {
+            "run_id": run_id or "",
             "total_days": valid_days,
             "avg_hit_rate": (total_hits / (valid_days * 10)) * 100 if valid_days else 0,
             "avg_alpha": (total_alpha / valid_days) if valid_days else 0,
-            "baseline_hit_rate": (total_random_hits / (valid_days * 10)) * 100 if valid_days else 0
+            "baseline_hit_rate": (total_random_hits / (valid_days * 10)) * 100 if valid_days else 0,
+            "cancelled": False,
         }
 
-    def get_history_performance(self, limit: int = 30) -> List:
+    def get_history_performance(self, limit: int = 30, run_id: str = "") -> List:
         """获取最近的回测表现趋势"""
-        results = self.db.query(BacktestResult).order_by(BacktestResult.date.desc()).limit(limit).all()
+        effective_run_id = self._resolve_effective_run_id(run_id)
+        query = self.db.query(BacktestResult)
+        if effective_run_id:
+            query = query.filter(BacktestResult.run_id == effective_run_id)
+        else:
+            query = query.filter(BacktestResult.run_id == "")
+        results = query.order_by(BacktestResult.date.desc()).limit(limit).all()
+        params_snapshot = self._lookup_params_snapshot(effective_run_id)
         return [
             {
                 "date": str(r.date),
+                "run_id": effective_run_id,
+                "params_snapshot": params_snapshot,
                 "hit_rate": (r.top_10_hits / 10.0) * 100,
                 "hits": r.top_10_hits,
                 "alpha": r.average_alpha,
@@ -145,14 +248,28 @@ class BacktestEngine:
             } for r in results
         ]
 
-    def get_day_detail(self, target_date: str) -> Dict:
+    def get_day_detail(self, target_date: str, run_id: str = "") -> Dict:
         """获取指定日期的 Top 10 回测明细"""
         from datetime import datetime
         dt = datetime.strptime(target_date, "%Y-%m-%d").date()
-        result = self.db.query(BacktestResult).filter(BacktestResult.date == dt).first()
+        effective_run_id = self._resolve_effective_run_id(run_id)
+        query = self.db.query(BacktestResult).filter(BacktestResult.date == dt)
+        if effective_run_id:
+            query = query.filter(BacktestResult.run_id == effective_run_id)
+        else:
+            query = query.filter(BacktestResult.run_id == "")
+        result = query.first()
+        params_snapshot = self._lookup_params_snapshot(effective_run_id)
         
         if not result:
-            return {"date": target_date, "details": [], "hits": 0, "alpha": 0.0}
+            return {
+                "date": target_date,
+                "run_id": effective_run_id,
+                "params_snapshot": params_snapshot,
+                "details": [],
+                "hits": 0,
+                "alpha": 0.0,
+            }
             
         import json
         import logging
@@ -164,6 +281,8 @@ class BacktestEngine:
             
         return {
             "date": target_date,
+            "run_id": effective_run_id,
+            "params_snapshot": params_snapshot,
             "hits": result.top_10_hits,
             "alpha": result.average_alpha,
             "details": details

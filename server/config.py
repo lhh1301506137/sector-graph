@@ -1,12 +1,12 @@
-# server/config.py
-# 配置管理：读写config表
+﻿# server/config.py
+# 閰嶇疆绠＄悊锛氳鍐檆onfig琛?
 
 import json
 from sqlalchemy.orm import Session
 from server.models import Config
 
 
-# 默认配置（首次启动时写入）
+# 榛樿閰嶇疆锛堥娆″惎鍔ㄦ椂鍐欏叆锛?
 DEFAULT_CONFIG = {
     "ai": {
         "provider": "deepseek",
@@ -21,15 +21,38 @@ DEFAULT_CONFIG = {
         "backtest_period": "60",
         "ranking_top_n": "10",
         "backtest_hit_range": "20",
+        "quality_max_failed_rows": "25",
+        "quality_required_fields": "name,category_type,daily_change,net_amount,turnover,lead_stock_change",
+        "quality_daily_change_abs_max": "20",
+        "quality_lead_stock_change_abs_max": "25",
+        "quality_turnover_abs_max": "30",
+        "quality_net_amount_abs_max": "500",
+        "quality_stale_minutes": "240",
+        "quality_require_freshness_for_publish": "1",
+        "quality_min_total_rows": "180",
     },
     "user": {
         "theme": "dark",
+    },
+    "data": {
+        "primary_source": "sina",
+        "verify_source": "akshare",
+        "tushare_token": "",
+        "dual_compare_enabled": "0",
+        "compare_warn_threshold_pct": "0.8",
+        "request_timeout_sec": "15",
+        "request_retry_count": "2",
+        "request_retry_backoff_sec": "0.6",
+        "http_proxy_enabled": "0",
+        "http_proxy": "",
+        "http_proxy_strategy": "auto",
+        "http_user_agent": "",
     },
 }
 
 
 def get_config(db: Session, category: str, key: str) -> str:
-    """获取单个配置值"""
+    """Get one config value."""
     config = db.query(Config).filter(
         Config.category == category,
         Config.key == key
@@ -38,7 +61,7 @@ def get_config(db: Session, category: str, key: str) -> str:
 
 
 def set_config(db: Session, category: str, key: str, value: str):
-    """设置单个配置值"""
+    """Set one config value."""
     config = db.query(Config).filter(
         Config.category == category,
         Config.key == key
@@ -52,7 +75,7 @@ def set_config(db: Session, category: str, key: str, value: str):
 
 
 def get_all_config(db: Session) -> dict:
-    """获取所有配置，按category分组"""
+    """Get all config values grouped by category."""
     configs = db.query(Config).all()
     result = {}
     for c in configs:
@@ -63,57 +86,62 @@ def get_all_config(db: Session) -> dict:
 
 
 def init_default_config(db: Session):
-    """初始化默认配置（仅在config表为空时执行）"""
-    count = db.query(Config).count()
-    if count > 0:
-        return  # 已有配置，跳过
-
+    """Initialize default config and fill missing keys."""
+    changed = False
     for category, items in DEFAULT_CONFIG.items():
         for key, value in items.items():
-            db.add(Config(category=category, key=key, value=value))
-    db.commit()
-    print("✅ 默认配置已初始化")
+            existing = db.query(Config).filter(
+                Config.category == category,
+                Config.key == key
+            ).first()
+            if not existing:
+                db.add(Config(category=category, key=key, value=value))
+                changed = True
+
+    if changed:
+        db.commit()
+        print("Default config initialized/filled")
 
 
-# 基础逻辑词库预设
+# 基础逻辑词库预设（启动时补齐到 relation_logics）
 INIT_LOGICS = [
     {
         "logic_name": "原料供应",
         "category": "供应",
-        "description": "上游原材料价格或产量变动，直接影响下游成本或产出",
+        "description": "上游原材料价格或产量变化，影响下游成本和供给。",
         "default_weight": 7.0,
         "importance": 1.0,
-        "prompt_template": "分析板块A是否为板块B的核心原材料供应商，若A涨价或放量，B是否会受到成本传导或需求拉动？"
+        "prompt_template": "分析板块A是否是板块B的关键原料供应方，A变化是否会传导到B。",
     },
     {
         "logic_name": "股权控制",
         "category": "政策联动",
-        "description": "母子公司、交叉持股或同一实控人，存在利益输送或合并报表预期",
+        "description": "母子公司、交叉持股或同一实控人，存在利益传导。",
         "default_weight": 5.0,
         "importance": 0.8,
-        "prompt_template": "分析板块A与B是否存在显著的股权隶属关系或同一国资委/实控人背景？"
+        "prompt_template": "分析板块A和板块B是否存在显著的股权或实控关系。",
     },
     {
         "logic_name": "政策扶持",
         "category": "政策联动",
-        "description": "同一份行业规划或宏观政策同时利好多个细分领域",
+        "description": "同一政策方向可同时影响多个细分板块。",
         "default_weight": 6.0,
         "importance": 0.9,
-        "prompt_template": "近期是否有顶层设计或行业政策（如'新质生产力'、'设备更新'）同时点名这两个板块？"
+        "prompt_template": "分析近期政策是否同时利好板块A和板块B。",
     },
     {
         "logic_name": "技术同源",
         "category": "技术同源",
-        "description": "核心工艺、研发成果或生产线可以共用或快速迁移",
+        "description": "底层工艺或研发成果可复用，形成联动。",
         "default_weight": 4.0,
         "importance": 0.6,
-        "prompt_template": "这两个板块的产品是否共用底层的关键技术平台？"
-    }
+        "prompt_template": "分析板块A与板块B是否共享关键技术平台。",
+    },
 ]
 
 
 def init_default_logics(db: Session):
-    """初始化基础逻辑词库"""
+    """Initialize default relation logic seeds."""
     from server.models import RelationLogic
     count = db.query(RelationLogic).count()
     if count > 0:
@@ -122,4 +150,5 @@ def init_default_logics(db: Session):
     for item in INIT_LOGICS:
         db.add(RelationLogic(**item))
     db.commit()
-    print("✅ 基础逻辑词库已初始化")
+    print("Relation logic seeds initialized")
+

@@ -17,6 +17,13 @@ from server.database import init_db, SessionLocal
 from server.config import init_default_config
 
 
+def _runtime_base_url() -> str:
+    host = str(os.getenv("APP_HOST", "127.0.0.1") or "127.0.0.1").strip()
+    port = str(os.getenv("APP_PORT", "8000") or "8000").strip()
+    display_host = "127.0.0.1" if host in ("0.0.0.0", "::") else host
+    return f"http://{display_host}:{port}"
+
+
 # ============================================================
 # 启动/关闭事件
 # ============================================================
@@ -25,7 +32,7 @@ from server.config import init_default_config
 async def lifespan(app: FastAPI):
     """启动时初始化数据库和配置"""
     print("=" * 50)
-    print("🚀 板块轮动预测系统 V0.4 启动中...")
+    print("Sector Graph System V0.4 starting...")
     print("=" * 50)
 
     # 初始化数据库表
@@ -41,14 +48,15 @@ async def lifespan(app: FastAPI):
     finally:
         db.close()
 
+    base_url = _runtime_base_url()
     print("=" * 50)
-    print("✅ 系统就绪！访问 http://localhost:8000")
-    print("📖 API文档：http://localhost:8000/docs")
+    print(f"System ready: {base_url}")
+    print(f"API docs: {base_url}/docs")
     print("=" * 50)
 
     yield  # 应用运行中
 
-    print("👋 系统已关闭")
+    print("System stopped.")
 
 
 # 创建 FastAPI 应用
@@ -86,6 +94,9 @@ app.include_router(backtest_router, prefix="/api")
 
 from server.routes.summary_routes import router as summary_router
 app.include_router(summary_router, prefix="/api")
+
+from server.routes.maintenance_routes import router as maintenance_router
+app.include_router(maintenance_router, prefix="/api")
 
 
 # ============================================================
@@ -130,9 +141,14 @@ async def health_check():
 
 if __name__ == "__main__":
     import uvicorn
+    host = str(os.getenv("APP_HOST", "0.0.0.0") or "0.0.0.0").strip()
+    try:
+        port = int(str(os.getenv("APP_PORT", "8000") or "8000").strip())
+    except ValueError:
+        port = 8000
     uvicorn.run(
         "server.app:app",
-        host="0.0.0.0",
-        port=8000,
+        host=host,
+        port=port,
         reload=True  # 开发模式：代码修改自动重启
     )

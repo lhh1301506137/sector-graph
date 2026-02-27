@@ -29,6 +29,12 @@ class ScoringEngine:
             DailyData.date == target_date
         ).first()
 
+    def is_quality_ok(self, daily_row: DailyData) -> bool:
+        if not daily_row:
+            return False
+        status = getattr(daily_row, "quality_status", "ok")
+        return status == "ok"
+
     def get_logic_importance(self, logic_name: str) -> float:
         """从缓存或数据库获取逻辑词的重要系数"""
         if not logic_name: return 1.0
@@ -41,7 +47,7 @@ class ScoringEngine:
     def calc_confidence(self, sector_id: int, target_date: date, window: int = 30) -> float:
         """计算置信度：支持内存窗口聚合"""
         today_data = self.get_daily_data(sector_id, target_date)
-        if not today_data or today_data.net_amount is None:
+        if not self.is_quality_ok(today_data) or today_data.net_amount is None:
             return 1.0
 
         if self.data_cache:
@@ -79,7 +85,8 @@ class ScoringEngine:
         for rel in relevant_rels:
             related_id = rel.target_id if rel.source_id == sector_id else rel.source_id
             related_data = self.get_daily_data(related_id, target_date)
-            if not related_data: continue
+            if not self.is_quality_ok(related_data):
+                continue
 
             importance = self.get_logic_importance(rel.logic_name)
             confidence = self.calc_confidence(related_id, target_date)
@@ -104,7 +111,8 @@ def get_algo_config(db: Session) -> dict:
 
 def calc_deviation(expected: float, actual: float, mode: str = "positive_only") -> float:
     """计算偏差值"""
-    diff = actual - expected
+    # 偏差定义统一为: 预期 - 实际
+    diff = expected - actual
     if mode == "positive_only":
         return max(0, diff)
     return diff
@@ -116,7 +124,14 @@ def calc_time_weight(days_ago: int, decay_days: int, decay_min: float) -> float:
     return 1.0 - (1.0 - decay_min) * (days_ago / decay_days)
 
 
-def run_scoring(db: Session, target_date: date = None, data_cache: Optional[Dict] = None) -> dict:
+def run_scoring(
+    db: Session,
+    target_date: date = None,
+    data_cache: Optional[Dict] = None,
+    persist_prediction: bool = True,
+    run_type: str = "prod",
+    run_id: str = "",
+) -> dict:
     """全量评分入口：现支持传入内存缓存"""
     if target_date is None: 
         target_date = date.today()
@@ -130,7 +145,8 @@ def run_scoring(db: Session, target_date: date = None, data_cache: Optional[Dict
     scores = []
     for sector in sectors:
         daily = engine.get_daily_data(sector.id, target_date)
-        if not daily: continue
+        if not engine.is_quality_ok(daily):
+            continue
 
         expected = engine.calc_expected_change(sector.id, target_date, all_relations)
         deviation = calc_deviation(expected, daily.daily_change, mode=config["deviation_mode"])
@@ -143,30 +159,48 @@ def run_scoring(db: Session, target_date: date = None, data_cache: Optional[Dict
         query = db.query(DailyData).filter(
             DailyData.sector_id == sector.id,
             DailyData.date <= target_date,
-            DailyData.date > target_date - timedelta(days=config["time_decay_days"])
+            DailyData.date > target_date - timedelta(days=config["time_decay_days"]),
+            DailyData.quality_status == "ok",
         )
-        if config["deviation_mode"] == "positive_only":
-            query = query.filter(DailyData.deviation > 0)
-        
+
         cum_score = 0.0
         for rec in query.all():
+            if rec.deviation is None:
+                continue
+            if config["deviation_mode"] == "positive_only" and rec.deviation <= 0:
+                continue
             days_ago = (target_date - rec.date).days
             tw = calc_time_weight(days_ago, config["time_decay_days"], config["time_decay_min"])
             cum_score += rec.deviation * tw
-        
+
+        # 持久化当日累计偏差，保证解释器和排行口径一致
+        daily.cumulative_deviation = round(cum_score, 4)
         scores.append({"sector_id": sector.id, "score": round(cum_score, 4)})
 
     # 排序并更新预测表
     scores.sort(key=lambda x: x["score"], reverse=True)
-    db.query(Prediction).filter(Prediction.date == target_date).delete()
-    
-    for i, s in enumerate(scores):
-        db.add(Prediction(
-            sector_id=s["sector_id"],
-            date=target_date,
-            score=s["score"],
-            rank=i + 1
-        ))
-    
+
+    if persist_prediction:
+        db.query(Prediction).filter(
+            Prediction.date == target_date,
+            Prediction.run_type == run_type
+        ).delete()
+        for i, s in enumerate(scores):
+            db.add(Prediction(
+                sector_id=s["sector_id"],
+                date=target_date,
+                score=s["score"],
+                rank=i + 1,
+                run_type=run_type,
+                run_id=run_id or "",
+            ))
+
     db.commit()
-    return {"date": str(target_date), "calculated": len(scores)}
+    return {
+        "date": str(target_date),
+        "calculated": len(scores),
+        "scores": scores,
+        "run_type": run_type,
+        "run_id": run_id or "",
+        "published": persist_prediction,
+    }

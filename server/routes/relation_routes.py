@@ -108,11 +108,13 @@ async def create_relation(data: RelationCreate, db: Session = Depends(get_db)):
     if data.type not in RELATION_TYPES:
         return {"error": f"无效关系类型，可选：{', '.join(RELATION_TYPES)}"}
 
-    # 避免重复关联
+    # 避免重复关联（双向同构去重）
     existing = db.query(Relation).filter(
-        Relation.source_id == data.source_id,
-        Relation.target_id == data.target_id,
-        Relation.type == data.type,
+        (
+            ((Relation.source_id == data.source_id) & (Relation.target_id == data.target_id)) |
+            ((Relation.source_id == data.target_id) & (Relation.target_id == data.source_id))
+        ) &
+        (Relation.type == data.type)
     ).first()
     if existing:
         return {"error": "该关联已存在", "existing_id": existing.id}

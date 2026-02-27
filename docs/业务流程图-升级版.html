@@ -1,0 +1,126 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>业务流程图（升级版）</title>
+  <style>
+    :root {
+      --text: #0f172a;
+      --muted: #475569;
+      --line: #cbd5e1;
+      --bg: #ffffff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      color: var(--text);
+      background: var(--bg);
+    }
+    .page {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 28px;
+      line-height: 1.2;
+    }
+    p {
+      margin: 0 0 16px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 16px;
+      overflow: auto;
+    }
+    .mermaid {
+      min-width: 1100px;
+    }
+    @media print {
+      @page { size: A4 landscape; margin: 10mm; }
+      .page { max-width: none; padding: 0; }
+      .card {
+        border: 1px solid #999;
+        border-radius: 0;
+        padding: 8px;
+      }
+      .mermaid {
+        min-width: 0;
+        width: 100%;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <h1>业务流程图（升级版）</h1>
+    <p>版本：2026-02-27（维护模式）。用于评审与打印归档。</p>
+    <section class="card">
+      <div class="mermaid">
+flowchart LR
+    A[收盘后触发同步] --> B[拉取API数据\n行业+概念]
+    B --> C{数据质量门控}
+    C -- 失败 --> C1[标记 quality_failed\n记录原因+告警]
+    C -- 通过 --> D[按 api_id+category_type 对齐（标准化）]
+
+    D --> E{是否新板块}
+    E -- 否 --> F[写入 daily_data（入库完成）\n进入待评分队列]
+    E -- 是 --> G[标记 new_detected]
+    G --> H[触发AI关联分析\n写入 pending suggestions]
+    H --> I[用户确认/编辑/拒绝]
+    I --> J[写入 relations\n板块状态->active]
+
+    F --> K[运行评分引擎]
+    J --> K
+    K --> K1[计算 expected/deviation/cumulative]
+    K1 --> L[生成预测结果\nrun_type=prod]
+    L --> M[发布排行榜+图谱展示]
+
+    M --> N[策略回测触发]
+    N --> O[回测任务队列\nbacktest_jobs]
+    O --> P[回测执行\nrun_type=backtest]
+    P --> Q[回测报告\n命中率/alpha/明细]
+
+    Q --> R[参数优化建议\nAI+人工]
+    R --> S[配置保存（版本化）]
+    S --> K
+
+    C1 --> T[系统监控面板\n最后同步日/失败率/耗时]
+    Q --> T
+    S --> T
+    T --> U[发布准备与运行保障\n发布前检查+运行手册]
+    U --> V[发布后运行观察与收官验收\n基线监控+证据归档]
+    V --> W[收官归档与维护交接\n归档清单+维护模式]
+    W --> X[维护模式（回归巡检）\n周期巡检+异常回归]
+
+    subgraph LG[阶段颜色图例]
+        LG1[已完成]
+        LG2[进行中]
+        LG3[待开始]
+    end
+
+    classDef done fill:#dcfce7,stroke:#16a34a,stroke-width:2px,color:#14532d;
+    classDef doing fill:#fef9c3,stroke:#ca8a04,stroke-width:2px,color:#713f12;
+    classDef pending fill:#e2e8f0,stroke:#64748b,stroke-width:1.5px,color:#334155;
+
+    class A,B,C,C1,D,E,F,G,H,I,J,K,K1,L,M,N,O,P,Q,R,S,T,U,V,W done;
+    class X doing;
+    class LG1 done;
+    class LG2 doing;
+    class LG3 pending;
+    style LG fill:transparent,stroke:#94a3b8,stroke-dasharray: 5 5
+      </div>
+    </section>
+  </main>
+  <script type="module">
+    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs";
+    mermaid.initialize({ startOnLoad: true, theme: "default", securityLevel: "loose" });
+  </script>
+</body>
+</html>

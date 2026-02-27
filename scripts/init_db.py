@@ -15,7 +15,7 @@ def main():
     if args.force:
         print("警告: 收到强制清理指令，正在删除现有表结构...")
         try:
-            from server.models import Sector, Relation, DailyData, Prediction, BacktestResult, Config
+            from server.models import Sector, Relation, DailyData, Prediction, BacktestResult, BacktestJob, Config
             Base.metadata.drop_all(bind=engine)
             print("原有表结构已彻底清除。")
         except Exception as e:
