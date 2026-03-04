@@ -57,6 +57,7 @@ class DailyData(Base):
     deviation = Column(Float, default=None, comment="偏差值")
     cumulative_deviation = Column(Float, default=None, comment="累计偏差得分")
     net_amount = Column(Float, default=0.0, comment="净流入（亿）")
+    volume = Column(Float, default=0.0, comment="成交量（万手）")
     turnover = Column(Float, default=0.0, comment="换手率")
     lead_stock = Column(String, default="", comment="领涨股名称")
     lead_stock_change = Column(Float, default=0.0, comment="领涨股涨幅%")

@@ -4,6 +4,7 @@
 import asyncio
 import os
 import random
+import re
 import time
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta
@@ -14,7 +15,7 @@ from sqlalchemy.orm import Session
 import httpx
 
 from server.database import get_db
-from server.models import Sector, DailyData, Config
+from server.models import Sector, DailyData, Config, Prediction
 from server.core.http_client import HttpClientProfile, build_http_profile, get_json, retry_async
 
 router = APIRouter()
@@ -58,6 +59,78 @@ EASTMONEY_CONCEPT_FIELDS = (
     "f62,f128,f124,f107,f104,f105,f136"
 )
 
+LEVEL_ORDER = ["basic", "mid", "advanced"]
+LEVEL_LABELS = {
+    "basic": "基础",
+    "mid": "中级",
+    "advanced": "高级",
+    "none": "不可用",
+}
+
+QUALITY_REQUIRED_FIELDS_BY_LEVEL = {
+    "basic": [
+        "name",
+        "category_type",
+        "daily_change",
+        "turnover",
+        "lead_stock",
+        "volume",
+    ],
+    "mid": [
+        "name",
+        "category_type",
+        "daily_change",
+        "turnover",
+        "lead_stock",
+        "volume",
+        "net_amount",
+        "lead_stock_change",
+    ],
+    "advanced": [
+        "name",
+        "category_type",
+        "daily_change",
+        "turnover",
+        "lead_stock",
+        "volume",
+        "net_amount",
+        "lead_stock_change",
+        "api_id",
+    ],
+}
+
+SECTOR_FIELD_LEVELS = {
+    "daily_change": "basic",
+    "volume": "basic",
+    "turnover": "basic",
+    "lead_stock": "basic",
+    "lead_stock_change": "basic",
+    "net_amount": "mid",
+    "deviation": "mid",
+    "cumulative_deviation": "mid",
+    "expected_change": "advanced",
+    "latest_score": "advanced",
+    "latest_rank": "advanced",
+    "quality_status": "advanced",
+    "quality_reason": "advanced",
+    "latest_prediction_date": "advanced",
+}
+
+SECTOR_LEVEL_REQUIRED_FIELDS = {
+    "basic": ["daily_change", "turnover", "lead_stock", "volume"],
+    "mid": ["daily_change", "turnover", "lead_stock", "volume", "net_amount", "deviation"],
+    "advanced": [
+        "daily_change",
+        "turnover",
+        "lead_stock",
+        "volume",
+        "net_amount",
+        "deviation",
+        "latest_score",
+        "quality_status",
+    ],
+}
+
 
 class TushareApiError(RuntimeError):
     def __init__(self, api_name: str, code: int, message: str):
@@ -92,6 +165,28 @@ def _config_bool(v: str) -> bool:
     return str(v).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _parse_ignore_keywords(raw: str) -> list[str]:
+    text = str(raw or "").strip()
+    if not text:
+        return []
+    tokens = re.split(r"[,，;\n\r；]+", text)
+    cleaned = []
+    for token in tokens:
+        item = str(token or "").strip()
+        if not item:
+            continue
+        if item not in cleaned:
+            cleaned.append(item)
+    return cleaned
+
+
+def _should_ignore_sector(name: str, api_id: str, ignore_keywords: list[str]) -> bool:
+    if not ignore_keywords:
+        return False
+    haystack = f"{str(name or '')} {str(api_id or '')}".lower()
+    return any(str(keyword).lower() in haystack for keyword in ignore_keywords)
+
+
 def _to_float(raw, default: float = 0.0) -> float:
     try:
         if raw is None:
@@ -106,6 +201,14 @@ def _to_float(raw, default: float = 0.0) -> float:
         return default
 
 
+def _to_float_or_none(raw):
+    if raw is None:
+        return None
+    if isinstance(raw, str) and raw.strip() == "":
+        return None
+    return _to_float(raw, default=None)
+
+
 def _to_int(raw, default: int = 0) -> int:
     try:
         if raw is None:
@@ -118,6 +221,61 @@ def _to_int(raw, default: int = 0) -> int:
         return int(raw)
     except Exception:
         return default
+
+
+def _normalize_level(raw_level: str, default: str = "basic") -> str:
+    level = str(raw_level or "").strip().lower()
+    if level in LEVEL_ORDER:
+        return level
+    return default
+
+
+def _required_fields_for_level(level: str) -> list[str]:
+    level = _normalize_level(level)
+    idx = LEVEL_ORDER.index(level)
+    fields: list[str] = []
+    for i in range(idx + 1):
+        tier = LEVEL_ORDER[i]
+        fields.extend(QUALITY_REQUIRED_FIELDS_BY_LEVEL.get(tier, []))
+    # Keep order while deduplicating.
+    return list(dict.fromkeys(fields))
+
+
+def _field_status_from_reasons(field: str, value, quality_reasons: list[str]) -> str:
+    if _is_missing_value(value):
+        return "missing"
+
+    field_token = str(field or "").strip().lower()
+    for reason in quality_reasons:
+        rs = str(reason or "").strip().lower()
+        if rs.startswith(f"missing_{field_token}"):
+            return "missing"
+        if field_token in rs and (rs.startswith("anomaly_") or rs.startswith("invalid_")):
+            return "abnormal"
+
+    return "ok"
+
+
+def _compute_sector_level_statuses(item: dict) -> tuple[dict, str]:
+    reasons = _split_quality_reasons(item.get("quality_reason", ""))
+    field_status = {}
+    for field_name in SECTOR_FIELD_LEVELS.keys():
+        field_status[field_name] = _field_status_from_reasons(field_name, item.get(field_name), reasons)
+
+    def _level_ready(level: str) -> bool:
+        required = SECTOR_LEVEL_REQUIRED_FIELDS.get(level, [])
+        return all(field_status.get(field) == "ok" for field in required)
+
+    if _level_ready("advanced"):
+        available_level = "advanced"
+    elif _level_ready("mid"):
+        available_level = "mid"
+    elif _level_ready("basic"):
+        available_level = "basic"
+    else:
+        available_level = "none"
+
+    return field_status, available_level
 
 
 def _split_quality_reasons(raw_reason: str) -> list[str]:
@@ -142,15 +300,30 @@ def _is_missing_value(value) -> bool:
 
 
 def _load_quality_rule_config(db: Session) -> dict:
+    required_level = _normalize_level(
+        _get_config(db, "algo", "quality_required_level", "basic"),
+        default="basic",
+    )
+    use_manual_required_fields = _config_bool(
+        _get_config(db, "algo", "quality_use_manual_required_fields", "0")
+    )
     required_fields_raw = _get_config(
         db,
         "algo",
         "quality_required_fields",
-        "name,category_type,daily_change,net_amount,turnover,lead_stock_change",
+        "",
     )
-    required_fields = [field.strip() for field in str(required_fields_raw).split(",") if field.strip()]
+    manual_required_fields = [field.strip() for field in str(required_fields_raw).split(",") if field.strip()]
+    required_fields = (
+        manual_required_fields
+        if (use_manual_required_fields and manual_required_fields)
+        else _required_fields_for_level(required_level)
+    )
 
     return {
+        "required_level": required_level,
+        "required_fields_source": "manual" if (use_manual_required_fields and manual_required_fields) else "level",
+        "required_fields_by_level": QUALITY_REQUIRED_FIELDS_BY_LEVEL,
         "required_fields": required_fields,
         "daily_change_abs_max": max(1.0, _to_float(_get_config(db, "algo", "quality_daily_change_abs_max", "20"), 20.0)),
         "lead_stock_change_abs_max": max(1.0, _to_float(_get_config(db, "algo", "quality_lead_stock_change_abs_max", "25"), 25.0)),
@@ -255,12 +428,29 @@ def parse_sina_item(item: dict, category_type: str) -> dict:
             quality_errors.append(f"invalid_{field}")
             return 0.0
 
+    avg_price_raw = item.get("avg_price")
+    in_amount_raw = item.get("inamount")
+    out_amount_raw = item.get("outamount")
+    avg_price = to_float(avg_price_raw, "avg_price", 1.0)
+    in_amount = to_float(in_amount_raw, "inamount", 1.0)
+    out_amount = to_float(out_amount_raw, "outamount", 1.0)
+    volume = None
+    has_amount = (
+        in_amount_raw not in (None, "")
+        and out_amount_raw not in (None, "")
+    )
+    if has_amount and avg_price > 0 and (in_amount > 0 or out_amount > 0):
+        # Convert estimated shares to 万手:
+        # total_amount(元) / avg_price(元/股) -> 股, then /100 -> 手, /10000 -> 万手.
+        volume = (in_amount + out_amount) / avg_price / 1_000_000
+
     return {
         "name": item.get("name", ""),
         "api_id": item.get("category", ""),
         "category_type": category_type,
         "daily_change": to_float(item.get("avg_changeratio", 0), "avg_changeratio", 100.0),
         "net_amount": to_float(item.get("netamount", 0), "netamount", 1.0 / 100_000_000),
+        "volume": volume,
         # Sina moneyflow turnover is usually returned as percent * 100 (e.g. 120.335 -> 1.20335%).
         "turnover": to_float(item.get("turnover", 0), "turnover", 0.01),
         "lead_stock": item.get("ts_name", ""),
@@ -343,12 +533,29 @@ def parse_akshare_item(row: dict, category_type: str) -> dict:
     if abs(net_amount) > 10000:
         net_amount = net_amount / 100_000_000
 
+    volume_raw = _pick_first(
+        row,
+        [
+            "\u6210\u4ea4\u91cf",
+            "\u603b\u624b",
+            "\u6210\u4ea4\u91cf(\u624b)",
+            "volume",
+        ],
+        None,
+    )
+    volume = _to_float(volume_raw, default=None)
+    if volume is not None:
+        # Normalize likely "手" unit to 万手; keep already-small values unchanged.
+        if abs(volume) >= 100000:
+            volume = volume / 10000.0
+
     return {
         "name": str(name),
         "api_id": api_id,
         "category_type": category_type,
         "daily_change": daily_change,
         "net_amount": net_amount,
+        "volume": volume,
         "turnover": turnover,
         "lead_stock": lead_stock,
         "lead_stock_change": lead_stock_change,
@@ -365,6 +572,9 @@ def parse_eastmoney_item(row: dict, category_type: str) -> dict:
 
     api_id = str(row.get("f12") or "").strip()
     daily_change = _to_float(row.get("f3"), 0.0)
+    volume = _to_float(row.get("f5"), default=None)
+    if volume is not None:
+        volume = volume / 10000.0  # EastMoney f5 is usually in 手.
     turnover = _to_float(row.get("f8"), 0.0)
     lead_stock = str(row.get("f128") or "").strip()
     lead_stock_change = _to_float(row.get("f136"), 0.0)
@@ -380,6 +590,7 @@ def parse_eastmoney_item(row: dict, category_type: str) -> dict:
         "category_type": category_type,
         "daily_change": daily_change,
         "net_amount": net_amount,
+        "volume": volume,
         "turnover": turnover,
         "lead_stock": lead_stock,
         "lead_stock_change": lead_stock_change,
@@ -809,6 +1020,7 @@ def _parse_tushare_moneyflow_item(row: dict, category_type: str, name_field: str
         "category_type": category_type,
         "daily_change": daily_change,
         "net_amount": net_amount,
+        "volume": None,
         "turnover": 0.0,
         "lead_stock": lead_stock,
         "lead_stock_change": lead_stock_change,
@@ -1190,12 +1402,17 @@ def build_compare_stats(primary_items: dict, verify_items: dict, warn_threshold_
 @router.get("/sectors")
 async def get_sectors(
     db: Session = Depends(get_db),
-    category_type: Optional[str] = Query(None, description="筛选：行业/概念"),
-    level: Optional[int] = Query(None, description="筛选：层级 1/2/3"),
-    favorited: Optional[bool] = Query(None, description="筛选：仅关注"),
-    search: Optional[str] = Query(None, description="搜索关键词"),
+    category_type: Optional[str] = Query(None, description="Filter: industry/concept"),
+    level: Optional[int] = Query(None, description="Filter: level 1/2/3"),
+    favorited: Optional[bool] = Query(None, description="Filter: favorited only"),
+    search: Optional[str] = Query(None, description="Search keyword"),
+    exclude_ignored: Optional[bool] = Query(False, description="Exclude sectors matched by ignore keywords"),
 ):
-    """获取板块列表"""
+    """Get sectors with latest basic/mid/advanced metrics for management table."""
+    from sqlalchemy import func
+
+    required_level = _normalize_level(_get_config(db, "algo", "quality_required_level", "basic"), "basic")
+
     query = db.query(Sector).filter(Sector.is_active == True)
 
     if category_type:
@@ -1208,17 +1425,104 @@ async def get_sectors(
         query = query.filter(Sector.name.contains(search))
 
     sectors = query.order_by(Sector.name).all()
+    ignore_keywords = []
+    if bool(exclude_ignored):
+        ignore_keywords = _parse_ignore_keywords(
+            _get_config(db, "data", "sector_ignore_keywords", "")
+        )
+    if not sectors:
+        return []
 
-    return [{
-        "id": s.id,
-        "name": s.name,
-        "category_type": s.category_type,
-        "api_id": s.api_id,
-        "level": s.level,
-        "parent_id": s.parent_id,
-        "is_active": s.is_active,
-        "is_favorited": s.is_favorited,
-    } for s in sectors]
+    sector_ids = [s.id for s in sectors]
+
+    latest_daily_subq = (
+        db.query(
+            DailyData.sector_id.label("sector_id"),
+            func.max(DailyData.date).label("max_date"),
+        )
+        .filter(DailyData.sector_id.in_(sector_ids))
+        .group_by(DailyData.sector_id)
+        .subquery()
+    )
+    latest_daily_rows = (
+        db.query(DailyData)
+        .join(
+            latest_daily_subq,
+            (DailyData.sector_id == latest_daily_subq.c.sector_id)
+            & (DailyData.date == latest_daily_subq.c.max_date),
+        )
+        .all()
+    )
+    latest_daily_by_sector = {row.sector_id: row for row in latest_daily_rows}
+
+    latest_prediction_subq = (
+        db.query(
+            Prediction.sector_id.label("sector_id"),
+            func.max(Prediction.date).label("max_date"),
+        )
+        .filter(
+            Prediction.sector_id.in_(sector_ids),
+            Prediction.run_type == "prod",
+        )
+        .group_by(Prediction.sector_id)
+        .subquery()
+    )
+    latest_prediction_rows = (
+        db.query(Prediction)
+        .join(
+            latest_prediction_subq,
+            (Prediction.sector_id == latest_prediction_subq.c.sector_id)
+            & (Prediction.date == latest_prediction_subq.c.max_date)
+            & (Prediction.run_type == "prod"),
+        )
+        .all()
+    )
+    latest_prediction_by_sector = {row.sector_id: row for row in latest_prediction_rows}
+
+    result = []
+    for s in sectors:
+        if ignore_keywords and _should_ignore_sector(s.name, s.api_id, ignore_keywords):
+            continue
+        daily = latest_daily_by_sector.get(s.id)
+        pred = latest_prediction_by_sector.get(s.id)
+        quality_status = (daily.quality_status if daily else "missing") or "missing"
+        row = {
+            "id": s.id,
+            "name": s.name,
+            "category_type": s.category_type,
+            "api_id": s.api_id,
+            "level": s.level,
+            "parent_id": s.parent_id,
+            "is_active": s.is_active,
+            "is_favorited": s.is_favorited,
+            "latest_date": str(daily.date) if daily else "",
+            "daily_change": daily.daily_change if daily else None,
+            "turnover": daily.turnover if daily else None,
+            "net_amount": daily.net_amount if daily else None,
+            "volume": (daily.volume if daily else None),
+            "lead_stock": daily.lead_stock if daily else "",
+            "lead_stock_change": daily.lead_stock_change if daily else None,
+            "expected_change": daily.expected_change if daily else None,
+            "deviation": daily.deviation if daily else None,
+            "cumulative_deviation": daily.cumulative_deviation if daily else None,
+            "quality_status": quality_status,
+            "quality_reason": daily.quality_reason if daily else "",
+            "is_verified_qualified": quality_status == "ok",
+            "latest_score": pred.score if pred else None,
+            "latest_rank": pred.rank if pred else None,
+            "latest_prediction_date": str(pred.date) if pred else "",
+        }
+        field_status, available_level = _compute_sector_level_statuses(row)
+        row["field_levels"] = SECTOR_FIELD_LEVELS
+        row["field_status"] = field_status
+        row["available_data_level"] = available_level
+        row["available_data_level_label"] = LEVEL_LABELS.get(available_level, "未知")
+        row["required_data_level"] = required_level
+        row["required_data_level_label"] = LEVEL_LABELS.get(required_level, "基础")
+        result.append(row)
+
+    return result
+
 @router.post("/sectors/refresh")
 async def refresh_sectors(db: Session = Depends(get_db)):
     """刷新板块数据（支持主源+校验源双源比对）"""
@@ -1361,7 +1665,10 @@ async def refresh_sectors(db: Session = Depends(get_db)):
             if str(item.get("quality_status", "ok")).strip().lower() != "ok"
         )
         result["quality"] = {
+            "required_level": quality_rule_config.get("required_level", "basic"),
+            "required_fields_source": quality_rule_config.get("required_fields_source", "level"),
             "required_fields": quality_rule_config.get("required_fields", []),
+            "required_fields_by_level": quality_rule_config.get("required_fields_by_level", QUALITY_REQUIRED_FIELDS_BY_LEVEL),
             "total_rows": len(latest_item_by_name),
             "failed_rows": quality_failed_rows,
             "ok_rows": max(0, len(latest_item_by_name) - quality_failed_rows),
@@ -1419,6 +1726,7 @@ async def refresh_sectors(db: Session = Depends(get_db)):
                 if daily:
                     daily.daily_change = item["daily_change"]
                     daily.net_amount = item["net_amount"]
+                    daily.volume = _to_float_or_none(item.get("volume"))
                     daily.turnover = item["turnover"]
                     daily.lead_stock = item["lead_stock"]
                     daily.lead_stock_change = item["lead_stock_change"]
@@ -1430,6 +1738,7 @@ async def refresh_sectors(db: Session = Depends(get_db)):
                         date=today,
                         daily_change=item["daily_change"],
                         net_amount=item["net_amount"],
+                        volume=_to_float_or_none(item.get("volume")),
                         turnover=item["turnover"],
                         lead_stock=item["lead_stock"],
                         lead_stock_change=item["lead_stock_change"],
@@ -1680,6 +1989,7 @@ async def get_sector_daily(
         "deviation": r.deviation,
         "cumulative_deviation": r.cumulative_deviation,
         "net_amount": r.net_amount,
+        "volume": r.volume,
         "turnover": r.turnover,
         "lead_stock": r.lead_stock,
         "lead_stock_change": r.lead_stock_change,

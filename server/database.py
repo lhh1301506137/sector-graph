@@ -38,8 +38,35 @@ def init_db():
     """鍒濆鍖栨暟鎹簱锛氬垱寤烘墍鏈夎〃"""
     from server.models import Sector, Relation, DailyData, Prediction, BacktestResult, BacktestJob, Config
     Base.metadata.create_all(bind=engine)
+    _ensure_daily_data_schema()
     _ensure_backtest_results_schema()
     print(f"Database initialized: {DB_PATH}")
+
+
+def _ensure_daily_data_schema():
+    """兼容历史 SQLite：为 daily_data 补齐新字段。"""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        conn.execute("BEGIN")
+        table_exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='daily_data'"
+        ).fetchone()
+        if not table_exists:
+            conn.commit()
+            return
+
+        cols = conn.execute("PRAGMA table_info(daily_data)").fetchall()
+        col_names = {r[1] for r in cols}
+
+        if "volume" not in col_names:
+            conn.execute("ALTER TABLE daily_data ADD COLUMN volume FLOAT DEFAULT 0.0")
+
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def _ensure_backtest_results_schema():

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 板块轮动预测系统 V0.5 - 核心逻辑
  * 整合了回测验证AI 分析及可视化详情面板
  */
@@ -8,6 +8,12 @@ const App = {
         currentPage: 'ranking',
         rankingData: [],
         sectorsData: [],
+        sectorsAllData: [],
+        sectorTableSort: { key: 'id', order: 'asc' },
+        sectorIgnoreKeywords: [],
+        sectorIgnoreKeywordsLoaded: false,
+        currentSectorManageView: 'sectors',
+        selectedSectorIds: [],
         relationsData: [],
         logicsData: [],
         aiPendingData: [],
@@ -2346,7 +2352,10 @@ const App = {
         if (page === 'graph') setTimeout(() => this.renderGraph(), 100);
 
         // 原数据管理子页拆分后的加载辑
-        if (page === 'manage-sectors') await this.loadSectors();
+        if (page === 'manage-sectors') {
+            this.updateSectorManageViewButtons();
+            await this.loadSectors();
+        }
         if (page === 'manage-relations') await this.loadRelations();
         if (page === 'manage-logics') await this.loadLogics();
 
@@ -2454,6 +2463,10 @@ const App = {
                 );
                 setValueIfExists('cfg-data-proxy', cfg.data.http_proxy || '');
                 setValueIfExists('cfg-data-proxy-strategy', cfg.data.http_proxy_strategy || 'auto');
+                setValueIfExists('cfg-data-ignore-list', cfg.data.sector_ignore_keywords || '');
+                this.setSectorIgnoreKeywords(cfg.data.sector_ignore_keywords || '');
+                this.state.sectorIgnoreKeywordsLoaded = true;
+                this.renderSectorIgnoreKeywordPreview();
             }
         } catch (e) {
             console.error('加载设置失败，保留数据源未检测占位:', e);
@@ -2471,6 +2484,7 @@ const App = {
             }
             await this.loadOptimizationSuggestions();
             await this.loadConfigVersions();
+            await this.handleRefreshSectorIgnoreHitPreview(false, true);
         }
     },
 
@@ -2971,13 +2985,760 @@ const App = {
         const raw = String(value || '').trim();
         if (!raw) return '';
         const lower = raw.toLowerCase();
-        if (lower === 'industry' || raw === '行业' || raw === '行业') return '行业';
-        if (lower === 'concept' || raw === '概念' || raw === '概念') return '概念';
+        if (lower === 'industry' || raw === '行业') return '行业';
+        if (lower === 'concept' || raw === '概念') return '概念';
         return raw;
     },
 
+    async ensureSectorIgnoreKeywordsLoaded(force = false) {
+        if (this.state.sectorIgnoreKeywordsLoaded && !force) return;
+        try {
+            const cfg = await API.getConfig();
+            const raw = cfg?.data?.sector_ignore_keywords || '';
+            this.setSectorIgnoreKeywords(raw);
+            this.state.sectorIgnoreKeywordsLoaded = true;
+            const textarea = document.getElementById('cfg-data-ignore-list');
+            if (textarea && textarea.value !== raw) textarea.value = raw;
+        } catch (e) {
+            console.error('加载忽略名单失败:', e);
+        }
+    },
+
+    async setSectorManageView(view) {
+        const next = String(view || '').toLowerCase() === 'ignored' ? 'ignored' : 'sectors';
+        this.state.currentSectorManageView = next;
+        this.updateSectorManageViewButtons();
+        await this.ensureSectorIgnoreKeywordsLoaded();
+        if (!Array.isArray(this.state.sectorsData) || this.state.sectorsData.length === 0) {
+            await this.loadSectors();
+            return;
+        }
+        this.renderCurrentSectorManageView();
+    },
+
+    updateSectorManageViewButtons() {
+        const view = this.state.currentSectorManageView || 'sectors';
+        const btnSectors = document.getElementById('btn-sector-view-sectors');
+        const btnIgnored = document.getElementById('btn-sector-view-ignored');
+        if (btnSectors) btnSectors.classList.toggle('active', view === 'sectors');
+        if (btnIgnored) btnIgnored.classList.toggle('active', view === 'ignored');
+        if (btnIgnored) {
+            const rows = Array.isArray(this.state.sectorsData) ? this.state.sectorsData : [];
+            const ignoredCount = rows.filter((item) => this.isIgnoredSector(item)).length;
+            btnIgnored.innerText = ignoredCount > 0 ? `忽略板块 (${ignoredCount})` : '忽略板块';
+        }
+    },
+
+    renderCurrentSectorManageView() {
+        this.updateSectorManageViewButtons();
+        this.renderSectorBatchSelectionSummary();
+        if ((this.state.currentSectorManageView || 'sectors') === 'ignored') {
+            this.renderIgnoredSectorsTable();
+            return;
+        }
+        this.renderSectorsTable();
+    },
+
+    getSelectedSectorIds() {
+        return Array.from(new Set(
+            (Array.isArray(this.state.selectedSectorIds) ? this.state.selectedSectorIds : [])
+                .map((x) => Number(x))
+                .filter((x) => Number.isFinite(x) && x > 0)
+        ));
+    },
+
+    isSectorSelected(sectorId) {
+        const sid = Number(sectorId);
+        if (!Number.isFinite(sid) || sid <= 0) return false;
+        return this.getSelectedSectorIds().includes(sid);
+    },
+
+    getVisibleSectorRowsForSelection() {
+        return (this.state.currentSectorManageView || 'sectors') === 'ignored'
+            ? this.getIgnoredSectorsRows()
+            : this.getDisplaySectorsRows();
+    },
+
+    getSelectedSectorsFromData() {
+        const ids = new Set(this.getSelectedSectorIds());
+        const rows = Array.isArray(this.state.sectorsData) ? this.state.sectorsData : [];
+        return rows.filter((item) => ids.has(Number(item?.id || 0)));
+    },
+
+    setSelectedSectorIds(ids) {
+        this.state.selectedSectorIds = Array.from(new Set(
+            (Array.isArray(ids) ? ids : [])
+                .map((x) => Number(x))
+                .filter((x) => Number.isFinite(x) && x > 0)
+        ));
+        this.renderSectorBatchSelectionSummary();
+    },
+
+    renderSectorBatchSelectionSummary() {
+        const el = document.getElementById('sector-batch-selected');
+        if (!el) return;
+        const count = this.getSelectedSectorIds().length;
+        el.innerText = `已选 ${count}`;
+    },
+
+    toggleSectorSelection(sectorId, checked = null) {
+        const sid = Number(sectorId);
+        if (!Number.isFinite(sid) || sid <= 0) return;
+        const current = new Set(this.getSelectedSectorIds());
+        const shouldSelect = checked === null ? !current.has(sid) : !!checked;
+        if (shouldSelect) current.add(sid);
+        else current.delete(sid);
+        this.setSelectedSectorIds(Array.from(current));
+        this.renderCurrentSectorManageView();
+    },
+
+    toggleSelectAllVisible(checked) {
+        const shouldSelect = !!checked;
+        const visibleIds = this.getVisibleSectorRowsForSelection()
+            .map((item) => Number(item?.id || 0))
+            .filter((id) => Number.isFinite(id) && id > 0);
+        const current = new Set(this.getSelectedSectorIds());
+        visibleIds.forEach((id) => {
+            if (shouldSelect) current.add(id);
+            else current.delete(id);
+        });
+        this.setSelectedSectorIds(Array.from(current));
+        this.renderCurrentSectorManageView();
+    },
+
+    clearSectorSelection(silent = false) {
+        this.setSelectedSectorIds([]);
+        if (this.state.currentPage === 'manage-sectors') this.renderCurrentSectorManageView();
+        if (!silent) this.showToast('已清空选择。', 'info');
+    },
+
+    getMatchedIgnoreKeywords(item) {
+        const keywords = Array.isArray(this.state.sectorIgnoreKeywords) ? this.state.sectorIgnoreKeywords : [];
+        if (!keywords.length) return [];
+        const name = String(item?.name || '').toLowerCase();
+        const apiId = String(item?.api_id || '').toLowerCase();
+        return keywords.filter((keyword) => {
+            const needle = String(keyword || '').trim().toLowerCase();
+            if (!needle) return false;
+            return name.includes(needle) || apiId.includes(needle);
+        });
+    },
+
+    getIgnoredSectorsRows() {
+        const rows = Array.isArray(this.state.sectorsData) ? this.state.sectorsData : [];
+        return rows
+            .filter((item) => this.isIgnoredSector(item))
+            .sort((a, b) => Number(b?.id || 0) - Number(a?.id || 0));
+    },
+
+    renderIgnoredSectorsTable() {
+        const wrap = document.getElementById('sectors-table-wrap');
+        if (!wrap) return;
+        const rows = this.getIgnoredSectorsRows();
+        if (rows.length === 0) {
+            wrap.innerHTML = `<div class="empty-state"><div class="icon">🧾</div><p>当前筛选范围内没有忽略板块</p></div>`;
+            return;
+        }
+        const visibleIds = rows.map((item) => Number(item?.id || 0)).filter((x) => Number.isFinite(x) && x > 0);
+        const selectedSet = new Set(this.getSelectedSectorIds());
+        const allChecked = visibleIds.length > 0 && visibleIds.every((id) => selectedSet.has(id));
+        const body = rows.map((item) => {
+            const typeText = this.escapeHTML(this.normalizeCategoryType(item?.category_type) || '-');
+            const nameText = this.escapeHTML(String(item?.name || ''));
+            const codeText = this.escapeHTML(String(item?.api_id || '-'));
+            const hits = this.getMatchedIgnoreKeywords(item);
+            const hitText = hits.length > 0 ? hits.map((x) => this.escapeHTML(x)).join(' / ') : '--';
+            const sid = Number(item?.id || 0);
+            const checked = selectedSet.has(sid) ? 'checked' : '';
+            return `<tr>
+                <td><input type="checkbox" ${checked} onchange="App.toggleSectorSelection(${sid}, this.checked)"></td>
+                <td>${sid}</td>
+                <td>${nameText}</td>
+                <td>${codeText}</td>
+                <td>${typeText}</td>
+                <td>${hitText}</td>
+                <td>
+                    <div class="row-actions">
+                        <button class="toolbar-btn mini" type="button" onclick="App.handleSectorRowUnignore(${sid})">移出忽略</button>
+                        <button class="toolbar-btn mini" type="button" onclick="App.toggleSectorActive(${sid}, ${item?.is_active ? 'true' : 'false'})">${item?.is_active ? '隐藏' : '显示'}</button>
+                        <button class="toolbar-btn mini alert" type="button" onclick="App.handleSectorRowDelete(${sid})">删除</button>
+                    </div>
+                </td>
+            </tr>`;
+        }).join('');
+
+        wrap.innerHTML = `<div class="ignored-table-hint">以下板块已入库，但在“板块列表”中被忽略隐藏。</div>
+            <div class="sector-table-scroll"><table class="manage-table ignored-sector-table"><thead><tr>
+                <th><input type="checkbox" ${allChecked ? 'checked' : ''} onchange="App.toggleSelectAllVisible(this.checked)"></th>
+                <th>编号</th><th>板块名称</th><th>代号</th><th>类型</th><th>命中关键词</th><th>操作</th>
+            </tr></thead><tbody>${body}</tbody></table></div>`;
+    },
+
+    parseSectorIgnoreKeywords(raw) {
+        return Array.from(new Set(
+            String(raw || '')
+                .split(/[\n,;，；]+/g)
+                .map((item) => item.trim())
+                .filter(Boolean)
+        ));
+    },
+
+    setSectorIgnoreKeywords(raw) {
+        const list = this.parseSectorIgnoreKeywords(raw);
+        this.state.sectorIgnoreKeywords = list;
+        return list;
+    },
+
+    syncSectorIgnoreKeywordsFromInput() {
+        const raw = document.getElementById('cfg-data-ignore-list')?.value || '';
+        this.setSectorIgnoreKeywords(raw);
+        this.renderSectorIgnoreKeywordPreview();
+        if (this.state.currentPage === 'manage-sectors') this.renderCurrentSectorManageView();
+    },
+
+    getSectorIgnoreHitMap(sourceRows = null) {
+        const keywords = Array.isArray(this.state.sectorIgnoreKeywords) ? this.state.sectorIgnoreKeywords : [];
+        const rows = Array.isArray(sourceRows)
+            ? sourceRows
+            : (Array.isArray(this.state.sectorsAllData) && this.state.sectorsAllData.length
+                ? this.state.sectorsAllData
+                : (Array.isArray(this.state.sectorsData) ? this.state.sectorsData : []));
+
+        const hitMap = new Map();
+        const matchedSectorIds = new Set();
+        keywords.forEach((keyword) => {
+            const needle = String(keyword || '').trim().toLowerCase();
+            if (!needle) {
+                hitMap.set(keyword, 0);
+                return;
+            }
+            let hitCount = 0;
+            rows.forEach((item) => {
+                const name = String(item?.name || '').toLowerCase();
+                const apiId = String(item?.api_id || '').toLowerCase();
+                if (name.includes(needle) || apiId.includes(needle)) {
+                    hitCount += 1;
+                    matchedSectorIds.add(String(item?.id ?? `${item?.name || ''}:${item?.api_id || ''}`));
+                }
+            });
+            hitMap.set(keyword, hitCount);
+        });
+        return {
+            hitMap,
+            uniqueMatchedCount: matchedSectorIds.size,
+            sourceCount: rows.length,
+        };
+    },
+
+    renderSectorIgnoreKeywordPreview() {
+        const summaryEl = document.getElementById('cfg-data-ignore-hit-preview');
+        const listEl = document.getElementById('cfg-data-ignore-list-preview');
+        if (!summaryEl || !listEl) return;
+
+        const keywords = Array.isArray(this.state.sectorIgnoreKeywords) ? this.state.sectorIgnoreKeywords : [];
+        if (!keywords.length) {
+            summaryEl.innerText = '当前无忽略关键词。';
+            summaryEl.title = '';
+            listEl.innerHTML = '';
+            return;
+        }
+
+        const { hitMap, uniqueMatchedCount, sourceCount } = this.getSectorIgnoreHitMap();
+        summaryEl.innerText = `关键词 ${keywords.length} 个，命中板块 ${uniqueMatchedCount} 条（入库但不在板块管理展示）`;
+        summaryEl.title = sourceCount > 0 ? `命中统计样本：${sourceCount} 条` : '命中统计样本为空';
+        listEl.innerHTML = keywords.map((keyword) => {
+            const hit = Number(hitMap.get(keyword) || 0);
+            const arg = JSON.stringify(keyword);
+            return (
+                `<span class="ignore-list-chip">` +
+                `<span class="kw">${this.escapeHTML(keyword)}</span>` +
+                `<span class="hit">命中 ${hit}</span>` +
+                `<button class="remove" type="button" title="移除该关键词" onclick='App.handleRemoveSectorIgnoreKeyword(${arg})'>×</button>` +
+                `</span>`
+            );
+        }).join('');
+    },
+
+    handleRemoveSectorIgnoreKeyword(keyword) {
+        const needle = String(keyword || '').trim();
+        if (!needle) return;
+        const next = (Array.isArray(this.state.sectorIgnoreKeywords) ? this.state.sectorIgnoreKeywords : [])
+            .filter((item) => String(item || '').trim() !== needle);
+        const textarea = document.getElementById('cfg-data-ignore-list');
+        if (textarea) textarea.value = next.join('\n');
+        this.setSectorIgnoreKeywords(next.join('\n'));
+        this.renderSectorIgnoreKeywordPreview();
+        if (this.state.currentPage === 'manage-sectors') this.renderCurrentSectorManageView();
+    },
+
+    handleClearSectorIgnoreKeywords() {
+        if (!confirm('确认清空板块忽略名单吗？')) return;
+        const textarea = document.getElementById('cfg-data-ignore-list');
+        if (textarea) textarea.value = '';
+        this.setSectorIgnoreKeywords('');
+        this.renderSectorIgnoreKeywordPreview();
+        if (this.state.currentPage === 'manage-sectors') this.renderCurrentSectorManageView();
+    },
+
+    handleImportSectorIgnoreKeywords() {
+        const input = window.prompt('请粘贴要导入的忽略关键词（支持逗号/分号/换行分隔）', '');
+        if (input === null) return;
+        const imported = this.parseSectorIgnoreKeywords(input);
+        if (!imported.length) {
+            this.showToast('未识别到可导入关键词。', 'info');
+            return;
+        }
+        const current = Array.isArray(this.state.sectorIgnoreKeywords) ? this.state.sectorIgnoreKeywords : [];
+        const merged = Array.from(new Set([...current, ...imported]));
+        const textarea = document.getElementById('cfg-data-ignore-list');
+        if (textarea) textarea.value = merged.join('\n');
+        this.setSectorIgnoreKeywords(merged.join('\n'));
+        this.renderSectorIgnoreKeywordPreview();
+        if (this.state.currentPage === 'manage-sectors') this.renderCurrentSectorManageView();
+        this.showToast(`已导入 ${imported.length} 个关键词。`, 'success');
+    },
+
+    async handleExportSectorIgnoreKeywords() {
+        const keywords = Array.isArray(this.state.sectorIgnoreKeywords) ? this.state.sectorIgnoreKeywords : [];
+        if (!keywords.length) {
+            this.showToast('忽略名单为空，无需导出。', 'info');
+            return;
+        }
+        const text = keywords.join('\n');
+        try {
+            if (navigator.clipboard && window.isSecureContext) {
+                await navigator.clipboard.writeText(text);
+                this.showToast(`已复制 ${keywords.length} 个关键词到剪贴板。`, 'success');
+                return;
+            }
+        } catch (_) {
+            // fallback to prompt below
+        }
+        window.prompt('请复制以下忽略名单内容：', text);
+    },
+
+    async handleRefreshSectorIgnoreHitPreview(force = true, silent = false) {
+        try {
+            const hasCached = Array.isArray(this.state.sectorsAllData) && this.state.sectorsAllData.length > 0;
+            if (force || !hasCached) {
+                const allRows = await API.getSectors({ exclude_ignored: false });
+                this.state.sectorsAllData = Array.isArray(allRows) ? allRows : [];
+            }
+            this.renderSectorIgnoreKeywordPreview();
+            if (this.state.currentPage === 'manage-sectors') this.renderCurrentSectorManageView();
+        } catch (e) {
+            console.error('刷新忽略名单命中预览失败', e);
+            if (!silent) this.showToast('刷新忽略名单命中预览失败，请检查后端日志。', 'error');
+        }
+    },
+
+    isIgnoredSector(item) {
+        const keywords = Array.isArray(this.state.sectorIgnoreKeywords) ? this.state.sectorIgnoreKeywords : [];
+        if (!keywords.length) return false;
+        const name = String(item?.name || '').toLowerCase();
+        const apiId = String(item?.api_id || '').toLowerCase();
+        return keywords.some((keyword) => {
+            const needle = String(keyword || '').toLowerCase();
+            if (!needle) return false;
+            return name.includes(needle) || apiId.includes(needle);
+        });
+    },
+
+    buildIgnoreKeywordsFromSectors(rows) {
+        return Array.from(new Set(
+            (Array.isArray(rows) ? rows : []).map((item) => {
+                const apiId = String(item?.api_id || '').trim();
+                if (apiId) return apiId;
+                return String(item?.name || '').trim();
+            }).filter(Boolean)
+        ));
+    },
+
+    async persistSectorIgnoreKeywords(nextKeywords, options = {}) {
+        const { showToast = true, toastMessage = '' } = options;
+        const keywords = Array.from(new Set((Array.isArray(nextKeywords) ? nextKeywords : [])
+            .map((x) => String(x || '').trim())
+            .filter(Boolean)));
+        const raw = keywords.join('\n');
+        await API.saveConfig({ data: { sector_ignore_keywords: raw } });
+        this.setSectorIgnoreKeywords(raw);
+        this.state.sectorIgnoreKeywordsLoaded = true;
+        const textarea = document.getElementById('cfg-data-ignore-list');
+        if (textarea) textarea.value = raw;
+        await this.handleRefreshSectorIgnoreHitPreview(true, true);
+        if (showToast) {
+            this.showToast(toastMessage || `忽略名单已更新（${keywords.length} 条）。`, 'success');
+        }
+    },
+
+    async addSectorsToIgnore(rows) {
+        const candidates = this.buildIgnoreKeywordsFromSectors(rows);
+        if (!candidates.length) {
+            this.showToast('未找到可加入忽略名单的板块。', 'info');
+            return;
+        }
+        const current = Array.isArray(this.state.sectorIgnoreKeywords) ? this.state.sectorIgnoreKeywords : [];
+        const merged = Array.from(new Set([...current, ...candidates]));
+        await this.persistSectorIgnoreKeywords(merged, {
+            showToast: true,
+            toastMessage: `已加入忽略名单 ${candidates.length} 条（当前 ${merged.length} 条）。`,
+        });
+        await this.loadSectors();
+    },
+
+    async removeSectorsFromIgnore(rows) {
+        const candidates = this.buildIgnoreKeywordsFromSectors(rows);
+        if (!candidates.length) {
+            this.showToast('未找到可移出忽略名单的板块。', 'info');
+            return;
+        }
+        const removeSet = new Set(candidates.map((x) => String(x || '').trim()));
+        const current = Array.isArray(this.state.sectorIgnoreKeywords) ? this.state.sectorIgnoreKeywords : [];
+        const next = current.filter((kw) => !removeSet.has(String(kw || '').trim()));
+        await this.persistSectorIgnoreKeywords(next, {
+            showToast: true,
+            toastMessage: `已移出忽略名单 ${candidates.length} 条（当前 ${next.length} 条）。`,
+        });
+        await this.loadSectors();
+    },
+
+    async applyBatchSectorUpdate(patch, label) {
+        const selected = this.getSelectedSectorsFromData();
+        if (!selected.length) {
+            this.showToast('请先选择至少一个板块。', 'info');
+            return;
+        }
+        const ids = selected.map((item) => Number(item?.id || 0)).filter((x) => Number.isFinite(x) && x > 0);
+        this.setLoading(true);
+        try {
+            await Promise.all(ids.map((id) => API.updateSector(id, patch)));
+            this.showToast(`${label}完成：${ids.length} 条。`, 'success');
+            this.clearSectorSelection(true);
+            await this.loadSectors();
+        } catch (e) {
+            console.error(`${label}失败:`, e);
+            this.showToast(`${label}失败：${e.message || '请查看后端日志'}`, 'error');
+        } finally {
+            this.setLoading(false);
+        }
+    },
+
+    async handleSectorBatchIgnore() {
+        const selected = this.getSelectedSectorsFromData();
+        if (!selected.length) {
+            this.showToast('请先选择至少一个板块。', 'info');
+            return;
+        }
+        await this.addSectorsToIgnore(selected);
+        this.clearSectorSelection(true);
+    },
+
+    async handleSectorBatchUnignore() {
+        const selected = this.getSelectedSectorsFromData();
+        if (!selected.length) {
+            this.showToast('请先选择至少一个板块。', 'info');
+            return;
+        }
+        await this.removeSectorsFromIgnore(selected);
+        this.clearSectorSelection(true);
+    },
+
+    async handleSectorBatchHide() {
+        await this.applyBatchSectorUpdate({ is_active: false }, '批量隐藏');
+    },
+
+    async handleSectorBatchShow() {
+        await this.applyBatchSectorUpdate({ is_active: true }, '批量显示');
+    },
+
+    async handleSectorBatchDelete() {
+        const selected = this.getSelectedSectorsFromData();
+        if (!selected.length) {
+            this.showToast('请先选择至少一个板块。', 'info');
+            return;
+        }
+        if (!confirm(`确认删除已选 ${selected.length} 个板块吗？此操作不可恢复。`)) return;
+        const ids = selected.map((item) => Number(item?.id || 0)).filter((x) => Number.isFinite(x) && x > 0);
+        this.setLoading(true);
+        try {
+            await Promise.all(ids.map((id) => API.deleteSector(id)));
+            this.showToast(`已删除 ${ids.length} 个板块。`, 'success');
+            this.clearSectorSelection(true);
+            await this.loadSectors();
+        } catch (e) {
+            console.error('批量删除失败:', e);
+            this.showToast(`批量删除失败：${e.message || '请查看后端日志'}`, 'error');
+        } finally {
+            this.setLoading(false);
+        }
+    },
+
+    async handleSectorRowIgnore(sectorId) {
+        const sid = Number(sectorId);
+        if (!Number.isFinite(sid) || sid <= 0) return;
+        const rows = Array.isArray(this.state.sectorsData) ? this.state.sectorsData : [];
+        const row = rows.find((item) => Number(item?.id || 0) === sid);
+        if (!row) return;
+        await this.addSectorsToIgnore([row]);
+    },
+
+    async handleSectorRowUnignore(sectorId) {
+        const sid = Number(sectorId);
+        if (!Number.isFinite(sid) || sid <= 0) return;
+        const rows = Array.isArray(this.state.sectorsData) ? this.state.sectorsData : [];
+        const row = rows.find((item) => Number(item?.id || 0) === sid);
+        if (!row) return;
+        await this.removeSectorsFromIgnore([row]);
+    },
+
+    async handleSectorRowDelete(sectorId) {
+        const sid = Number(sectorId);
+        if (!Number.isFinite(sid) || sid <= 0) return;
+        const rows = Array.isArray(this.state.sectorsData) ? this.state.sectorsData : [];
+        const row = rows.find((item) => Number(item?.id || 0) === sid);
+        const name = row?.name || `#${sid}`;
+        if (!confirm(`确认删除板块「${name}」吗？此操作不可恢复。`)) return;
+        this.setLoading(true);
+        try {
+            await API.deleteSector(sid);
+            this.showToast(`已删除板块：${name}`, 'success');
+            const left = this.getSelectedSectorIds().filter((x) => x !== sid);
+            this.setSelectedSectorIds(left);
+            await this.loadSectors();
+        } catch (e) {
+            console.error('删除板块失败:', e);
+            this.showToast(`删除失败：${e.message || '请查看后端日志'}`, 'error');
+        } finally {
+            this.setLoading(false);
+        }
+    },
+
+    getSectorSortIcon(key) {
+        const sort = this.state.sectorTableSort || { key: 'id', order: 'asc' };
+        if (sort.key !== key) return '<>';
+        return sort.order === 'asc' ? '^' : 'v';
+    },
+
+    setSectorSort(key) {
+        const sort = this.state.sectorTableSort || { key: 'id', order: 'asc' };
+        if (sort.key === key) {
+            this.state.sectorTableSort = { key, order: sort.order === 'asc' ? 'desc' : 'asc' };
+        } else {
+            this.state.sectorTableSort = { key, order: key === 'id' ? 'asc' : 'desc' };
+        }
+        this.renderSectorsTable();
+    },
+
+    getSectorSortValue(item, key) {
+        const toNumOrNull = (v) => {
+            const n = Number(v);
+            return Number.isFinite(n) ? n : null;
+        };
+        switch (key) {
+            case 'id': return toNumOrNull(item?.id);
+            case 'name': return String(item?.name || '');
+            case 'api_id': return String(item?.api_id || '');
+            case 'category_type': return String(this.normalizeCategoryType(item?.category_type) || '');
+            case 'daily_change': return toNumOrNull(item?.daily_change);
+            case 'volume': return toNumOrNull(item?.volume);
+            case 'turnover': return toNumOrNull(item?.turnover);
+            case 'lead_stock': return String(item?.lead_stock || '');
+            case 'net_amount': return toNumOrNull(item?.net_amount);
+            case 'deviation': return toNumOrNull(item?.deviation);
+            case 'cumulative_deviation': return toNumOrNull(item?.cumulative_deviation);
+            case 'latest_score': return toNumOrNull(item?.latest_score);
+            case 'quality_status': return String(item?.quality_status || '');
+            case 'quality_reason': return String(item?.quality_reason || '');
+            case 'latest_date': return String(item?.latest_date || '');
+            case 'available_data_level': {
+                const lv = String(item?.available_data_level || '').toLowerCase();
+                if (lv === 'advanced') return 3;
+                if (lv === 'mid') return 2;
+                if (lv === 'basic') return 1;
+                return 0;
+            }
+            default: return String(item?.[key] || '');
+        }
+    },
+
+    getDisplaySectorsRows() {
+        const sourceRows = Array.isArray(this.state.sectorsData) ? this.state.sectorsData : [];
+        const rows = sourceRows.filter((item) => !this.isIgnoredSector(item));
+        const sort = this.state.sectorTableSort || { key: 'id', order: 'asc' };
+        rows.sort((a, b) => {
+            const av = this.getSectorSortValue(a, sort.key);
+            const bv = this.getSectorSortValue(b, sort.key);
+            const an = typeof av === 'number';
+            const bn = typeof bv === 'number';
+            let cmp = 0;
+
+            if (an || bn) {
+                if (av === null && bv === null) cmp = 0;
+                else if (av === null) cmp = 1;
+                else if (bv === null) cmp = -1;
+                else cmp = av - bv;
+            } else {
+                cmp = String(av || '').localeCompare(String(bv || ''), 'zh-CN');
+            }
+
+            if (cmp === 0) {
+                cmp = Number(a?.id || 0) - Number(b?.id || 0);
+            }
+            return sort.order === 'asc' ? cmp : -cmp;
+        });
+        return rows;
+    },
+
+    renderSectorDataState(value, options = {}) {
+        const {
+            showAbnormalWhenFailed = false,
+            qualityStatus = '',
+            formatter = null,
+        } = options;
+
+        if (showAbnormalWhenFailed && String(qualityStatus || '').toLowerCase() === 'failed') {
+            return '<span class="sector-data-state abnormal">异常</span>';
+        }
+        if (value === null || value === undefined) {
+            return '<span class="sector-data-state missing">未获取</span>';
+        }
+        if (typeof value === 'string' && value.trim() === '') {
+            return '<span class="sector-data-state empty">空</span>';
+        }
+        if (typeof value === 'number' && !Number.isFinite(value)) {
+            return '<span class="sector-data-state abnormal">异常</span>';
+        }
+
+        try {
+            const output = formatter ? formatter(value) : value;
+            if (output === null || output === undefined) {
+                return '<span class="sector-data-state missing">未获取</span>';
+            }
+            const txt = String(output);
+            if (!txt.trim()) {
+                return '<span class="sector-data-state empty">空</span>';
+            }
+            return this.escapeHTML(txt);
+        } catch (_) {
+            return '<span class="sector-data-state abnormal">异常</span>';
+        }
+    },
+
+    renderSectorsTable() {
+        const wrap = document.getElementById('sectors-table-wrap');
+        if (!wrap) return;
+
+        const rows = this.getDisplaySectorsRows();
+        if (rows.length === 0) {
+            wrap.innerHTML = `<div class="empty-state"><div class="icon">📭</div><p>暂无板块数据</p></div>`;
+            return;
+        }
+        const visibleIds = rows.map((item) => Number(item?.id || 0)).filter((x) => Number.isFinite(x) && x > 0);
+        const selectedSet = new Set(this.getSelectedSectorIds());
+        const allChecked = visibleIds.length > 0 && visibleIds.every((id) => selectedSet.has(id));
+
+        const sortTh = (key, label) =>
+            `<th><button class="table-sort-btn" type="button" onclick="App.setSectorSort('${key}')">${label}<span class="sort-icon">${this.getSectorSortIcon(key)}</span></button></th>`;
+
+        const fmtSignedPercent = (v, digits = 2) => {
+            const n = Number(v);
+            if (!Number.isFinite(n)) return '--';
+            return `${n > 0 ? '+' : ''}${n.toFixed(digits)}%`;
+        };
+        const fmtUnsignedPercent = (v, digits = 2) => {
+            const n = Number(v);
+            if (!Number.isFinite(n)) return '--';
+            return `${n.toFixed(digits)}%`;
+        };
+
+        const body = rows.map((s) => {
+            const dailyChange = Number(s?.daily_change);
+            const dailyChangeClass = Number.isFinite(dailyChange)
+                ? (dailyChange > 0 ? 'change-up' : (dailyChange < 0 ? 'change-down' : 'change-flat'))
+                : 'change-flat';
+
+            const turnover = Number(s?.turnover);
+            const turnoverText = Number.isFinite(turnover) ? fmtUnsignedPercent(turnover, 2) : '--';
+            const netAmount = Number(s?.net_amount);
+            const netAmountText = Number.isFinite(netAmount) ? netAmount.toFixed(2) : '--';
+
+            const leadStockChange = Number(s?.lead_stock_change);
+            const leadStockChangeText = Number.isFinite(leadStockChange)
+                ? ` (${leadStockChange > 0 ? '+' : ''}${leadStockChange.toFixed(2)}%)`
+                : '';
+
+            const qualityStatusRaw = String(s?.quality_status || '').toLowerCase();
+            const qualityStatusText = qualityStatusRaw === 'ok'
+                ? '<span class="sector-data-state ok">合格</span>'
+                : (qualityStatusRaw === 'failed'
+                    ? '<span class="sector-data-state abnormal">异常</span>'
+                    : '<span class="sector-data-state missing">未获取</span>');
+
+            const qualityReasonText = qualityStatusRaw === 'failed'
+                ? this.renderSectorDataState(s?.quality_reason, { formatter: (v) => String(v || '').trim() || '未知异常' })
+                : this.renderSectorDataState(s?.quality_reason, { formatter: (v) => String(v || '').trim() });
+
+            const nameText = this.escapeHTML(s?.name || '');
+            const codeText = this.renderSectorDataState(s?.api_id, { formatter: (v) => `代码: ${v}` });
+            const typeText = this.escapeHTML(this.normalizeCategoryType(s?.category_type) || '-');
+            const levelText = this.escapeHTML(s?.available_data_level_label || '未知');
+            const leadStockText = this.renderSectorDataState(s?.lead_stock, {
+                formatter: (v) => `${String(v)}${leadStockChangeText}`,
+            });
+            const sid = Number(s?.id || 0);
+            const checked = selectedSet.has(sid) ? 'checked' : '';
+            const isIgnored = this.isIgnoredSector(s);
+
+            return `<tr>
+                <td><input type="checkbox" ${checked} onchange="App.toggleSectorSelection(${sid}, this.checked)"></td>
+                <td>${s.id}</td>
+                <td class="sector-name-cell"><div class="sector-name-main">${nameText}</div><div class="sector-name-sub">${codeText}</div></td>
+                <td>${typeText}</td>
+                <td class="${dailyChangeClass}">${fmtSignedPercent(s?.daily_change, 2)}</td>
+                <td>${this.renderSectorDataState(s?.volume, { showAbnormalWhenFailed: true, qualityStatus: qualityStatusRaw, formatter: (v) => `${Number(v).toLocaleString('zh-CN', { maximumFractionDigits: 2 })}万手` })}</td>
+                <td>${turnoverText}</td>
+                <td>${leadStockText}</td>
+                <td>${this.renderSectorDataState(s?.net_amount, { showAbnormalWhenFailed: true, qualityStatus: qualityStatusRaw, formatter: () => `${netAmountText}亿` })}</td>
+                <td>${this.renderSectorDataState(s?.deviation, { showAbnormalWhenFailed: true, qualityStatus: qualityStatusRaw, formatter: (v) => fmtSignedPercent(v, 2) })}</td>
+                <td>${this.renderSectorDataState(s?.cumulative_deviation, { showAbnormalWhenFailed: true, qualityStatus: qualityStatusRaw, formatter: (v) => Number(v).toFixed(2) })}</td>
+                <td>${this.renderSectorDataState(s?.latest_score, { showAbnormalWhenFailed: true, qualityStatus: qualityStatusRaw, formatter: (v) => Number(v).toFixed(2) })}</td>
+                <td><span class="sector-data-level">${levelText}</span></td>
+                <td>${qualityStatusText}</td>
+                <td class="quality-reason-cell"><div class="quality-reason-text">${qualityReasonText}</div></td>
+                <td>${this.renderSectorDataState(s?.latest_date, { formatter: (v) => v })}</td>
+                <td>
+                    <div class="row-actions">
+                        <button class="toolbar-btn mini" type="button" onclick="App.toggleSectorActive(${s.id}, ${s.is_active})">${s.is_active ? '隐藏' : '显示'}</button>
+                        <button class="toolbar-btn mini" type="button" onclick="${isIgnored ? `App.handleSectorRowUnignore(${sid})` : `App.handleSectorRowIgnore(${sid})`}">${isIgnored ? '移出忽略' : '加入忽略'}</button>
+                        <button class="toolbar-btn mini alert" type="button" onclick="App.handleSectorRowDelete(${sid})">删除</button>
+                    </div>
+                </td>
+            </tr>`;
+        }).join('');
+
+        wrap.innerHTML = `<div class="sector-table-scroll"><table class="manage-table sector-manage-table"><thead><tr>
+            <th><input type="checkbox" ${allChecked ? 'checked' : ''} onchange="App.toggleSelectAllVisible(this.checked)"></th>
+            ${sortTh('id', '编号')}
+            ${sortTh('name', '名称/代码')}
+            ${sortTh('category_type', '类型')}
+            ${sortTh('daily_change', '基础-涨幅')}
+            ${sortTh('volume', '基础-交易量')}
+            ${sortTh('turnover', '基础-换手率')}
+            ${sortTh('lead_stock', '基础-领涨股')}
+            ${sortTh('net_amount', '中级-净流入')}
+            ${sortTh('deviation', '中级-偏差')}
+            ${sortTh('cumulative_deviation', '中级-累计偏差')}
+            ${sortTh('latest_score', '高级-评分')}
+            ${sortTh('available_data_level', '可用级别')}
+            ${sortTh('quality_status', '高级-质量')}
+            ${sortTh('quality_reason', '高级-异常识别')}
+            ${sortTh('latest_date', '更新日期')}
+            <th>操作</th>
+        </tr></thead><tbody>${body}</tbody></table></div>`;
+    },
+
     // ============================================================
-    // 排行榜辑 (Step 9 Upgrade)
+    // 排行榜逻辑 (Step 9 Upgrade)
     // ============================================================
     filterRanking() {
         if (this.state.rankingFilterDebounceTimer) {
@@ -3341,22 +4102,28 @@ const App = {
     // 数据管理 (Sectors, Relations, Logics)
     // ============================================================
     async loadSectors() {
+        await this.ensureSectorIgnoreKeywordsLoaded();
         const params = {
             category_type: this.normalizeCategoryType(document.getElementById('sector-type-filter')?.value),
             search: document.getElementById('sector-search')?.value,
+            exclude_ignored: false,
         };
         const data = await API.getSectors(params);
-        this.state.sectorsData = data;
-        const wrap = document.getElementById('sectors-table-wrap');
-        if (!wrap) return;
-        wrap.innerHTML = `<table><thead><tr><th>ID</th><th>名称</th><th>类型</th><th>状态</th><th>操作</th></tr></thead><tbody>` +
-            data.map(s => `<tr><td>${s.id}</td><td>${s.name}</td><td>${s.category_type}</td><td>${s.is_active ? '✅' : '❌'}</td>
-                <td><button class="label-btn" onclick="App.toggleSectorActive(${s.id}, ${s.is_active})">${s.is_active ? '隐藏' : '显示'}</button></td></tr>`).join('') + `</tbody></table>`;
+        this.state.sectorsData = Array.isArray(data) ? data : [];
+        const idSet = new Set(this.state.sectorsData.map((item) => Number(item?.id || 0)).filter((x) => Number.isFinite(x) && x > 0));
+        const kept = this.getSelectedSectorIds().filter((id) => idSet.has(id));
+        this.setSelectedSectorIds(kept);
+        const hasFilter = !!String(params.category_type || '').trim() || !!String(params.search || '').trim();
+        if (!hasFilter) {
+            this.state.sectorsAllData = [...this.state.sectorsData];
+        }
+        this.renderCurrentSectorManageView();
+        this.renderSectorIgnoreKeywordPreview();
     },
 
     async toggleSectorActive(id, current) {
         await API.updateSector(id, { is_active: !current });
-        this.loadSectors();
+        await this.loadSectors();
     },
 
     async loadRelations() {
@@ -3615,6 +4382,10 @@ const App = {
         }
         const qualityRequiredFieldsInput = (document.getElementById('cfg-quality-required-fields').value || '').trim();
         const qualityRequiredFields = qualityRequiredFieldsInput || 'name,category_type,daily_change,net_amount,turnover,lead_stock_change';
+        const sectorIgnoreRaw = (document.getElementById('cfg-data-ignore-list')?.value || '').trim();
+        this.setSectorIgnoreKeywords(sectorIgnoreRaw);
+        this.state.sectorIgnoreKeywordsLoaded = true;
+        this.renderSectorIgnoreKeywordPreview();
 
         const data = {
             ai: {
@@ -3643,7 +4414,8 @@ const App = {
                 compare_warn_threshold_pct: document.getElementById('cfg-data-threshold')?.value || '0.8',
                 http_proxy_enabled: proxyEnabled ? '1' : '0',
                 http_proxy: proxyValue,
-                http_proxy_strategy: proxyStrategy
+                http_proxy_strategy: proxyStrategy,
+                sector_ignore_keywords: sectorIgnoreRaw
             }
         };
         const newTushareToken = (document.getElementById('cfg-data-tushare-token')?.value || '').trim();
@@ -4324,5 +5096,6 @@ const App = {
 
 window.addEventListener('DOMContentLoaded', () => App.init());
 window.addEventListener('beforeunload', () => App.stopMaintenanceInspectionPolling());
+
 
 

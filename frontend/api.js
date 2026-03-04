@@ -56,6 +56,10 @@ const API = {
         });
     },
 
+    async deleteSector(id) {
+        return requestJSON(`/api/sectors/${id}`, { method: 'DELETE' });
+    },
+
     async getSectorDaily(id, days = 30) {
         return requestJSON(`/api/sectors/${id}/daily?days=${days}`);
     },

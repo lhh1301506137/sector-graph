@@ -7,7 +7,7 @@
     <title>板块轮动预测系统</title>
     <meta name="description" content="A股板块关系图谱与轮动预测系统">
     <link rel="icon" href="data:,">
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/style.css?v=20260304-manage-table-v3">
     <!-- ECharts -->
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
 </head>
@@ -241,6 +241,21 @@
                             <option value="industry">行业</option>
                             <option value="concept">概念</option>
                         </select>
+                        <div class="manage-view-switch">
+                            <button class="toolbar-btn active" id="btn-sector-view-sectors"
+                                onclick="App.setSectorManageView('sectors')">板块列表</button>
+                            <button class="toolbar-btn" id="btn-sector-view-ignored"
+                                onclick="App.setSectorManageView('ignored')">忽略板块</button>
+                        </div>
+                        <div class="manage-batch-toolbar">
+                            <span class="toolbar-hint" id="sector-batch-selected">已选 0</span>
+                            <button class="toolbar-btn" type="button" onclick="App.handleSectorBatchIgnore()">加入忽略</button>
+                            <button class="toolbar-btn" type="button" onclick="App.handleSectorBatchUnignore()">移出忽略</button>
+                            <button class="toolbar-btn" type="button" onclick="App.handleSectorBatchHide()">批量隐藏</button>
+                            <button class="toolbar-btn" type="button" onclick="App.handleSectorBatchShow()">批量显示</button>
+                            <button class="toolbar-btn alert" type="button" onclick="App.handleSectorBatchDelete()">批量删除</button>
+                            <button class="toolbar-btn" type="button" onclick="App.clearSectorSelection()">清空选择</button>
+                        </div>
                     </div>
                     <div id="sectors-table-wrap"></div>
                 </div>
@@ -428,7 +443,7 @@
                         <div class="modal-field">
                             <label>必填字段 (quality_required_fields, 逗号分隔)</label>
                             <input type="text" id="cfg-quality-required-fields"
-                                value="name,category_type,daily_change,net_amount,turnover,lead_stock_change">
+                                value="name,category_type,daily_change,turnover,lead_stock,volume">
                         </div>
                         <div class="modal-field">
                             <label>异常阈值: daily_change 绝对值上限</label>
@@ -445,6 +460,20 @@
                         <div class="modal-field">
                             <label>异常阈值: net_amount 绝对值上限</label>
                             <input type="number" id="cfg-quality-net-amount-max" value="500" min="1" step="0.1">
+                        </div>
+                        <div class="modal-field">
+                            <label>必填字段级别 (quality_required_level)</label>
+                            <select id="cfg-quality-required-level">
+                                <option value="basic">基础（仅基础字段）</option>
+                                <option value="mid">中级（基础+中级）</option>
+                                <option value="advanced">高级（基础+中级+高级）</option>
+                            </select>
+                        </div>
+                        <div class="modal-field">
+                            <label style="display:flex;align-items:center;gap:8px;">
+                                <input type="checkbox" id="cfg-quality-use-manual-required-fields" onchange="App.handleQualityRequiredFieldsModeToggle()">
+                                使用手动必填字段覆盖级别规则 (quality_use_manual_required_fields)
+                            </label>
                         </div>
                         <hr style="margin:24px 0; border:0; border-top:1px solid var(--border-glass)">
                         <h4>数据源策略</h4>
@@ -498,6 +527,20 @@
                                 <option value="force_direct">force_direct（仅直连）</option>
                                 <option value="force_proxy">force_proxy（仅代理）</option>
                             </select>
+                        </div>
+                        <div class="modal-field">
+                            <label>板块忽略名单（逗号 / 分号 / 换行分隔，入库但不在板块管理表格显示）</label>
+                            <textarea id="cfg-data-ignore-list" rows="3"
+                                placeholder="例如：中证500ETF购3月3900, 300ETF购3月4700"
+                                oninput="App.syncSectorIgnoreKeywordsFromInput()"></textarea>
+                            <div class="ignore-list-actions">
+                                <button class="toolbar-btn" type="button" onclick="App.handleImportSectorIgnoreKeywords()">导入文本</button>
+                                <button class="toolbar-btn" type="button" onclick="App.handleExportSectorIgnoreKeywords()">导出名单</button>
+                                <button class="toolbar-btn" type="button" onclick="App.handleClearSectorIgnoreKeywords()">清空名单</button>
+                                <button class="toolbar-btn" type="button" onclick="App.handleRefreshSectorIgnoreHitPreview()">刷新命中预览</button>
+                            </div>
+                            <div id="cfg-data-ignore-hit-preview" class="toolbar-hint"></div>
+                            <div id="cfg-data-ignore-list-preview" class="ignore-list-preview"></div>
                         </div>
                         <div class="modal-field" style="margin-top:10px; display:flex; gap:10px; align-items:center;">
                             <button class="toolbar-btn" id="btn-data-health" onclick="App.handleCheckDataSources()">🩺 检查数据源连通性</button>
@@ -682,8 +725,8 @@
     </div>
 
     <div id="toast-container"></div>
-    <script src="/static/api.js?v=20260227-maintenance2"></script>
-    <script src="/static/app.js?v=20260227-maintenance2"></script>
+    <script src="/static/api.js?v=20260304-manage-table-v3"></script>
+    <script src="/static/app.js?v=20260304-manage-table-v3"></script>
 </body>
 
 </html>
